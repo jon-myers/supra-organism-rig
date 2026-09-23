@@ -3,7 +3,7 @@ metro_slider.scd -- one slider, logarithmic tempo, live click.
 Slider left = LO BPM (default 20; starts at 30), right = HI BPM (default 80), equal slider
 distance = equal tempo RATIO (log map), so 30->40 feels like 60->80.
 The tempo glides server-side (glide s), so moves are smooth, never stepped.
-Readout shows the ACTUAL tempo the click is at, 4x a second. No animation.
+Readout shows the ACTUAL tempo the click is at, once a second (~msReadHz). No animation.
 Select all, evaluate.
 */
 (
@@ -11,6 +11,7 @@ Select all, evaluate.
 ~msOutDevice = "External Headphones";      // nil = system default
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
+~msReadHz = 1;      // tempo readout updates per second (capped 0.25-4)
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
 
@@ -20,7 +21,7 @@ s = Server.default;
 
 s.waitForBoot {
 	SynthDef(\msClick, { |bpm = 30, glide = 0.5, amp = 0.5, voice = 0, out = 0,
-		cycle = 10, accent = 1.5|
+		cycle = 10, accent = 1.5, readhz = 1|
 		var tempo = Lag.kr(bpm, glide);
 		// Impulse integrates its frequency, so tempo changes bend the pulse
 		// smoothly instead of restarting it
@@ -36,7 +37,7 @@ s.waitForBoot {
 		// beep: Reaper-style 4.5 ms burst of 880 Hz
 		var beep = SinOsc.ar(880 * ratio) * EnvGen.ar(Env.linen(0.0005, 0.0035, 0.0005), trig);
 		var sig = Limiter.ar(Select.ar(voice, [tock * 0.6, beep]) * amp.lag(0.05), 0.95);
-		SendReply.kr(Impulse.kr(4), '/msTempo', A2K.kr(tempo));
+		SendReply.kr(Impulse.kr(readhz.clip(0.25, 4)), '/msTempo', A2K.kr(tempo));
 		SendReply.ar(trig, '/msBeat', count);
 		Out.ar(out, sig ! 2);
 	}).add;
@@ -54,7 +55,7 @@ s.waitForBoot {
 		~msSynth ?? {
 			~msBeats = 0;
 			~msSynth = Synth(\msClick, [\bpm, ~msBpm, \glide, 0, \amp, ~msAmp, \voice, ~msVoice,
-				\cycle, ~msCycle, \accent, ~msAccent]);
+				\cycle, ~msCycle, \accent, ~msAccent, \readhz, ~msReadHz]);
 		};
 		{ ~msRunBtn.value = 1 }.defer;
 	};
