@@ -1,7 +1,7 @@
 /*
-Studio rig: 4-lane FlowEdit morph + Concatenator interface
-----------------------------------------------------------
-One window, two tabs, shared 4-lane capture strip:
+Supra-Organism rehearsal rig: FlowEdit morph + Concatenator + set panes
+--------------------------------------------------------------------------
+One window, six tabs, shared 4-lane capture strip:
 
   CAPTURE  record up to 4 input channels at once (armed lanes), or load files.
            Also long-form "corpus rec" straight to disk for the concatenator.
@@ -9,6 +9,10 @@ One window, two tabs, shared 4-lane capture strip:
            parallel across servers) -> per-lane swipeable morph players.
   TAB 2    Concatenator: per-lane live_shim.py processes (concatenator-corpus
            repo), live OSC knobs, direct-to-hardware output (no Loopback).
+  TAB 4-6  Set panes, one lane each: WALL OF SOUND (lane 1 = bell_12min render
+           streamed from disk, lane 2 = live dyad firing), METRONOMES (lane 3 =
+           Callender files / live fader click / glide-to-target), LATENTFT
+           (lane 4 = sample-locked A/B with equal-power crossfade, section cues).
 
 nanoKONTROL2 (factory CC map): sliders 1-4 = lane main gesture (morph pos /
 chase speed), sliders 5-8 = lane levels, knobs 1-4 = pan, knobs 5-8 = wet
@@ -118,6 +122,33 @@ Select all, evaluate. See STUDIO-RIG.md for the runbook.
 // nanoKONTROL2 factory CC map (remap here if the unit is customized)
 // Strip n = lane n: the KNOB directly above each fader is that lane's volume,
 // the fader is its morph. Pan and wet live on the second bank of four.
+// ------------------------- set panes (tabs 4-6) -------------------------
+// Each pane is bound to ONE lane so the strips, MIDI S-row, mute/solo and the
+// output meters keep meaning what they mean: lane 1 = bell_12min render,
+// lane 2 = live dyads, lane 3 = metronome, lane 4 = LatentFT crossfade.
+~tabWs = 3; ~tabMt = 4; ~tabLf = 5;
+~wsLane = 0; ~dyLane = 1; ~mtLane = 2; ~lfLane = 3;
+~wsRoot      = ~soRoot +/+ "wall_of_sound";
+~wsRenders   = ~wsRoot +/+ "renders/bell_12min";
+~wsStems     = ~wsRoot +/+ "stems";
+~wsLoadStems = true;      // 24 x ~26 MB stereo 96 kHz stems into RAM at boot
+~mtRoot      = ~soRoot +/+ "metronomes";
+~lfFormFile  = ~soRoot +/+ "phantom_pain_form/out/form_compact.json";
+// the original track: the project copy first, then this Mac's pre-migration copy
+~lfOriginals = [
+	~soRoot +/+ "song_deconstruct/in/phantom_pain.wav",
+	~soRoot +/+ "phantom_pain_form/in/phantom_pain.wav",
+	~soRoot.dirname.dirname +/+ "experiments/song_deconstruct/in/phantom_pain.wav"
+];
+~lfDirs = [    // label -> folder, scanned for wavs at eval time (rescan button)
+	"fullsong" -> "song_deconstruct/.claude/worktrees/latentft/out/latentft/fullsong",
+	"pieces"   -> "song_deconstruct/.claude/worktrees/latentft/out/latentft/pieces",
+	"run11"    -> "song_deconstruct/.claude/worktrees/latentft/out/latentft/LISTEN_run11_grid_and_bandpass",
+	"run10"    -> "song_deconstruct/out/latentft/LISTEN_run10_FULLSONG_pieces",
+	"for_ann"  -> "song_deconstruct/out/latentft/for_ann",
+	"for_ann"  -> "song_deconstruct/.claude/worktrees/for-ann/out/latentft/for_ann"
+];
+
 ~srMidi = (
 	gestureSliders: [0, 1, 2, 3],     // morph (tabs 1+3) / chase speed (tab 2)
 	volumeKnobs:    [16, 17, 18, 19], // knob above the fader
@@ -258,6 +289,80 @@ s.waitForBoot {
 		}).add;
 	};
 	~makeMeterDef.value;
+
+	// ---- set panes: players ----
+	// 12-minute render streamed from disk (96 kHz wav or 48 kHz mp3, rate-
+	// scaled to the server rate). Position is reported once a second.
+	SynthDef(\srDisk, { |buf, amp = 0.7, pan = 0, out = 0, rate = 1, start = 0, dur = 1|
+		var sig = VDiskIn.ar(2, buf, rate, loop: 0);
+		var pos = Line.kr(start, dur, (dur - start).max(0.01), doneAction: 2);
+		var o = Balance2.ar(sig[0], sig[1], pan.lag(0.05), amp.lag(0.05));
+		SendReply.kr(Impulse.kr(1), '/srWsPos', pos, \lane.kr(0));
+		~outMeter.(o, 0);
+		Out.ar(out, o);
+	}).add;
+	// one dyad stem with compose.py's apex envelope: rise from silence to the
+	// apex, fall to the end, no sustain. gain = the event's own random level,
+	// amp = the lane level (set on the group by the mixer).
+	SynthDef(\srDyad, { |buf, amp = 0.7, gain = 1, pos = 0, apex = 0.5, out = 0|
+		var durS = BufDur.kr(buf);
+		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 0, doneAction: 2);
+		var env = EnvGen.kr(Env([0, 1, 0], [apex * durS, (1 - apex) * durS], \sin));
+		var o = Balance2.ar(sig[0], sig[1], pos, amp.lag(0.05) * gain * env);
+		~outMeter.(o, 0);
+		Out.ar(out, o);
+	}).add;
+	// metronome file (mono), position reported twice a second for the
+	// beat / BPM readout
+	SynthDef(\srMetro, { |buf, amp = 0.7, pan = 0, out = 0, start = 0|
+		var dur = BufDur.kr(buf);
+		var sig = PlayBuf.ar(1, buf, BufRateScale.kr(buf),
+			startPos: start * BufSampleRate.kr(buf), loop: 0, doneAction: 2);
+		var pos = Line.kr(start, dur, (dur - start).max(0.01));
+		var o = Pan2.ar(sig, pan.lag(0.05), amp.lag(0.05));
+		SendReply.kr(Impulse.kr(2), '/srMtPos', pos, \lane.kr(0));
+		~outMeter.(o, 0);
+		Out.ar(out, o);
+	}).add;
+	// live click: the tempo is a control that GLIDES (VarLag) so a fader move
+	// or a typed target never steps. voice 0 = synthesised pyramid-metronome
+	// tock (1050/1900/3250 Hz + noise transient), 1 = Reaper-style 880 Hz beep.
+	// Beat count + current BPM are reported twice a second.
+	SynthDef(\srClick, { |amp = 0.7, pan = 0, out = 0, bpm = 60, glide = 1,
+		curve = 0, voice = 0, t_reset = 0|
+		var bpmNow = VarLag.kr(bpm, glide, curve);
+		var trig = Impulse.kr(bpmNow / 60);
+		var tock = (SinOsc.ar([1050, 1900, 3250]) * [1, 0.5, 0.3]).sum
+			* EnvGen.ar(Env.perc(0.0005, 0.06, 1, -6), trig) * 0.5
+			+ (BPF.ar(WhiteNoise.ar, 2500, 0.5)
+				* EnvGen.ar(Env.perc(0.0002, 0.006, 1, -4), trig));
+		var beep = SinOsc.ar(880) * EnvGen.ar(Env.perc(0.0005, 0.03, 0.7, -4), trig);
+		var sig = Select.ar(voice, [tock, beep]);
+		var o = Pan2.ar(sig, pan.lag(0.05), amp.lag(0.05));
+		SendReply.kr(Impulse.kr(2), '/srClick',
+			[PulseCount.kr(trig, t_reset), bpmNow], \lane.kr(0));
+		~outMeter.(o, 0);
+		Out.ar(out, o);
+	}).add;
+	// LatentFT: two sources read by ONE clock in seconds, so files at 22050
+	// and 44100 Hz stay sample-locked; equal-power crossfade xf 0 = A, 1 = B.
+	// offB shifts B (a 40 s piece cut from 60 s in wants offB = -60).
+	SynthDef(\srLfX, { |bufA, bufB, xf = 0, amp = 0.7, pan = 0, out = 0,
+		start = 0, dur = 300, offB = 0|
+		var sec = Phasor.ar(0, SampleDur.ir, start, 1e9, start);
+		var rdA = BufRd.ar(2, bufA,
+			(sec * BufSampleRate.kr(bufA)).clip(0, BufFrames.kr(bufA) - 1), 0, 4);
+		var rdB = BufRd.ar(2, bufB,
+			((sec + offB) * BufSampleRate.kr(bufB)).clip(0, BufFrames.kr(bufB) - 1), 0, 4);
+		var x = xf.lag(0.05).clip(0, 1) * 0.5pi;
+		var mix = (rdA * x.cos) + (rdB * x.sin);
+		var o = Balance2.ar(mix[0], mix[1], pan.lag(0.05), amp.lag(0.05));
+		var ksec = A2K.kr(sec);
+		SendReply.kr(Impulse.kr(1), '/srLfPos', ksec, \lane.kr(0));
+		FreeSelf.kr(ksec > dur);
+		~outMeter.(o, 0);
+		Out.ar(out, o);
+	}).add;
 
 	// per-lane morph def, sized to slot count (same crossfade math as
 	// flowedit_morph.scd, plus pan/level)
@@ -613,6 +718,7 @@ s.waitForBoot {
 			~shimAddr.(i).sendMsg("/level", ~effLevel.(i));
 			~shimAddr.(i).sendMsg("/pan", ~lanePan[i]);
 		};
+		~paneApplyMix !? { ~paneApplyMix.(i) };
 	};
 
 	// one job: write send file -> run sc_bridge -> load slots. done.() when finished.
@@ -1277,7 +1383,7 @@ s.waitForBoot {
 	~laneWetBoxes = Array.newClear(nL);
 	~laneGrainBoxes = Array.newClear(nL);
 
-	~win = Window("studio rig -- flowedit + concatenator",
+	~win = Window("supra-organism rig -- flowedit + concatenator + set panes",
 		Rect(60, 40, 1180, 860)).front;
 
 	// ----- capture strip -----
@@ -1814,6 +1920,678 @@ s.waitForBoot {
 		)
 	);
 
+	{
+	// ================= set panes: wall of sound / metronomes / LatentFT =================
+	// Motion-safe like the rest: every readout is a StaticText stepped at 1-2 Hz
+	// by a SendReply, menus and buttons only, no drag anywhere.
+	~mmss = { |secs|
+		var t = secs.max(0).round.asInteger;
+		(t div: 60).asString ++ ":" ++ (t % 60).asString.padLeft(2, "0");
+	};
+	~wavsIn = { |dir|
+		if (File.exists(dir)) {
+			PathName(dir).files.select { |f| f.extension == "wav" }
+				.collect(_.fullPath).sort;
+		} { [] };
+	};
+	~paneHeader = { |title, sub|
+		View().fixedWidth_(~transportW).layout_(VLayout(
+			StaticText().string_(title).font_(Font.default.boldVariant).fixedHeight_(16),
+			StaticText().string_(sub).fixedHeight_(16),
+			nil));
+	};
+	~paneBtn = { |label, w = 62|
+		Button().states_([[label, Color.gray(0.3), Color.white]])
+		.fixedWidth_(w).fixedHeight_(20);
+	};
+	~paneToggle = { |off, on, w = 62|
+		Button().states_([
+			[off, Color.gray(0.3), Color.white],
+			[on, Color.black, Color.new255(90, 220, 120)]])
+		.fixedWidth_(w).fixedHeight_(20);
+	};
+
+	// ---------------- wall of sound: lane 1 = bell_12min render ----------------
+	~wsVersions = [];      // [label -> path]
+	~wsPath = nil; ~wsDur = 720; ~wsPos = 0; ~wsSynth = nil; ~wsDiskBuf = nil;
+	~wsScan = {
+		~wsVersions = [];
+		["A_dyads", "B_dyads+voices", "C_dyads+voices+chords"].do { |name|
+			["curve", "open"].do { |shape|
+				var base = ~wsRenders +/+ name ++ "_" ++ shape;
+				case
+				{ File.exists(base ++ ".wav") } {
+					~wsVersions = ~wsVersions.add((name ++ " " ++ shape) -> (base ++ ".wav")) }
+				{ File.exists(base ++ ".mp3") } {
+					~wsVersions = ~wsVersions.add((name ++ " " ++ shape ++ " (mp3)")
+						-> (base ++ ".mp3")) };
+			};
+		};
+		~wsMenu !? { |m|
+			var keep = m.value;
+			m.items = ~wsVersions.collect(_.key);
+			if (~wsVersions.notEmpty) {
+				m.value = keep.clip(0, ~wsVersions.size - 1);
+				~wsPath = ~wsVersions[m.value].value;
+			};
+		};
+		if (~wsVersions.notEmpty and: { ~wsPath.isNil }) { ~wsPath = ~wsVersions[0].value };
+	};
+	~wsReadoutSet = { |str| { ~wsReadout !? { ~wsReadout.string = str } }.defer };
+	~wsPlay = { |on|
+		if (on) {
+			if (~wsSynth.isNil and: { ~wsPath.notNil }) {
+				var sf = SoundFile.openRead(~wsPath);
+				if (sf.isNil) {
+					~status.("wall: cannot open " ++ ~wsPath.basename);
+				} {
+					var fileSR = sf.sampleRate;
+					~wsDur = sf.numFrames / fileSR;
+					sf.close;
+					~wsPos = ~wsPos.clip(0, ~wsDur - 1);
+					fork {
+						var startPos = ~wsPos;
+						~wsDiskBuf = Buffer.cueSoundFile(s, ~wsPath,
+							(startPos * fileSR).asInteger, 2, 131072);
+						s.sync;
+						~wsSynth = Synth(\srDisk, [\buf, ~wsDiskBuf,
+							\rate, fileSR / s.sampleRate, \start, startPos, \dur, ~wsDur,
+							\amp, ~effLevel.(~wsLane), \pan, ~lanePan[~wsLane],
+							\out, ~srOutBus, \lane, ~wsLane]);
+						~wsSynth.onFree {
+							var b = ~wsDiskBuf;
+							~wsSynth = nil;
+							~wsDiskBuf = nil;
+							b !? { b.close; b.free };
+							// ran off the end: next play starts over
+							if (~wsPos >= (~wsDur - 1.5)) { ~wsPos = 0 };
+							~wsReadoutSet.(~mmss.(~wsPos) ++ " / " ++ ~mmss.(~wsDur) ++ "  stopped");
+							~surfRefresh.value;
+						};
+						~status.("wall: " ++ ~wsPath.basename ++ " from " ++ ~mmss.(startPos)
+							++ " (" ++ fileSR ++ " Hz file, rate " ++ (fileSR / s.sampleRate) ++ ")");
+					};
+				};
+			};
+		} {
+			~wsSynth !? { ~wsSynth.free };   // onFree does the bookkeeping
+		};
+		~surfRefresh.value;
+	};
+	~wsLocate = { |secs|
+		var was = ~wsSynth.notNil;
+		~wsPos = secs.clip(0, ~wsDur - 1);
+		if (was) { ~wsSynth.free; { ~wsPlay.(true) }.defer(0.1) }
+		{ ~wsReadoutSet.(~mmss.(~wsPos) ++ " / " ++ ~mmss.(~wsDur) ++ "  cued") };
+	};
+	OSCdef(\srWsPos, { |msg|
+		~wsPos = msg[3];
+		~wsReadoutSet.(~mmss.(~wsPos) ++ " / " ++ ~mmss.(~wsDur) ++ "  playing");
+	}, '/srWsPos');
+
+	// ---------------- wall of sound: lane 2 = live dyads ----------------
+	// Mirrors compose.py by hand: one stem per event, apex envelope peaking
+	// at a gaussian-drawn point (mean 0.5, sigma 0.125, clipped 0.25-0.75),
+	// random azimuth, random gain 0 to -6 dB. Stem choice is a Tenney-style
+	// dissonant-counterpoint draw: the longer since a stem was used, the
+	// likelier it is (weight = age^2), so the same dyad never comes twice.
+	~dyadBufs = Array.newClear(24);
+	~dyadGroup = Group(s);
+	~dyadAuto = nil;
+	~dyadDensity = 0.5;          // fader position 0..1
+	~dyadIvalFor = { |v| 60 * ((2 / 60) ** v.clip(0, 1)) };   // 60 s .. 2 s mean gap
+	~dyadCount = 0;
+	~dyadFired = nil ! 24;       // event index when stem k was last fired
+	~dyadLast = nil;
+	~dyadLoaded = 0;
+	~dyadLoad = {
+		var paths = ~wavsIn.(~wsStems);
+		~dyadLoaded = 0;
+		paths.do { |p|
+			var k = p.basename.splitext[0].asInteger - 1;
+			if (k >= 0 and: { k < 24 } and: { ~dyadBufs[k].isNil }) {
+				~dyadBufs[k] = Buffer.read(s, p, action: {
+					~dyadLoaded = ~dyadLoaded + 1;
+					{ ~dyadReadout !? { ~dyadReadout.string =
+						"stems loaded " ++ ~dyadLoaded ++ " / " ++ paths.size } }.defer;
+				});
+			};
+		};
+		if (paths.isEmpty) { ~status.("wall: no stems found in " ++ ~wsStems) };
+	};
+	~dyadPick = {
+		var w = 24.collect { |k|
+			var age = if (~dyadFired[k].isNil) { 24 } { (~dyadCount - ~dyadFired[k]).clip(1, 24) };
+			if (~dyadBufs[k].isNil) { 0 } { age.squared };
+		};
+		if (w.sum <= 0) { nil } { (0..23).wchoose(w.normalizeSum) };
+	};
+	~dyadFire = { |k|
+		var buf = if (k.notNil) { ~dyadBufs[k] };
+		if (buf.isNil) {
+			~status.("wall: stem " ++ (k !? { |x| (x + 1).asString } ? "?") ++ " not loaded");
+		} {
+			var pos = 0.85.rand2;
+			var gainDb = rrand(-6.0, 0.0);
+			var apex = 0.5.gauss(0.125).clip(0.25, 0.75);
+			Synth(\srDyad, [\buf, buf, \amp, ~effLevel.(~dyLane), \gain, gainDb.dbamp,
+				\pos, pos, \apex, apex, \out, ~srOutBus, \lane, ~dyLane], ~dyadGroup);
+			~dyadFired[k] = ~dyadCount;
+			~dyadCount = ~dyadCount + 1;
+			~dyadLast = k;
+			{ ~dyadReadout !? { ~dyadReadout.string =
+				"last: " ++ (k + 1).asString.padLeft(2, "0")
+				++ "  pos " ++ pos.round(0.01) ++ "  " ++ gainDb.round(0.1) ++ " dB"
+				++ "  apex " ++ apex.round(0.01)
+				++ "  · events " ++ ~dyadCount
+				++ if (~dyadAuto.notNil) { "  · AUTO ~" ++ ~dyadIvalFor.(~dyadDensity).round(0.1) ++ " s" } { "" } } }.defer;
+		};
+	};
+	~dyadAutoSet = { |on|
+		if (on) {
+			if (~dyadAuto.isNil) {
+				~dyadAuto = Routine {
+					loop {
+						~dyadFire.(~dyadPick.value);
+						(~dyadIvalFor.(~dyadDensity) * exprand(0.5, 2.0)).wait;
+					};
+				}.play(SystemClock);
+			};
+		} {
+			~dyadAuto !? { ~dyadAuto.stop; ~dyadAuto = nil };
+		};
+		{ ~dyadAutoBtn !? { ~dyadAutoBtn.value = ~dyadAuto.notNil.asInteger } }.defer;
+		~surfRefresh.value;
+	};
+	~dyadSetDensity = { |v| ~dyadDensity = v.clip(0, 1) };
+	~dyadHush = {     // let sounding dyads finish but fire no more
+		~dyadAutoSet.(false);
+	};
+	~dyadCut = { ~dyadAutoSet.(false); ~dyadGroup.freeAll };
+
+	{
+	}.value;
+
+	// ---------------- metronomes: lane 3 ----------------
+	// Three modes. FILES = the pre-rendered Callender sweeps (exact durations,
+	// end on a downbeat at 80). LIVE = a click whose tempo follows fader 3
+	// inside a BPM range, with a short glide -- steer it by how the dancers
+	// are doing. GLIDE = type a target BPM and a duration, GO, and the click
+	// ramps there from wherever it is; re-target any time mid-ramp.
+	~mtSets = [    // label -> folder (relative to metronomes/), voices below
+		"speedups 30-80" -> "speedups_30-80bpm",
+		"90 counts 30-80" -> "90counts_30-80bpm",
+		"log-even 30-80" -> "logeven/30-80bpm",
+		"log-even 30-120" -> "logeven/30-120bpm",
+		"fixed tempo" -> ""
+	];
+	~mtVoices = ["tock", "beep"];
+	~mtFiles = [];   // paths for the current set/voice
+	~mtBuf = nil; ~mtSynth = nil; ~mtPath = nil;
+	~mtTimes = nil; ~mtBpms = nil; ~mtBeats = nil; ~mtTotal = 0; ~mtDur = 0; ~mtPos = 0;
+	~mtScan = {
+		var set = ~mtSets[~mtSetMenu.value];
+		var dir = if (set.value == "") { ~mtRoot }
+			{ ~mtRoot +/+ set.value +/+ ~mtVoices[~mtVoiceMenu.value] };
+		~mtFiles = ~wavsIn.(dir);
+		~mtFileMenu.items = ~mtFiles.collect { |p| p.basename.splitext[0] };
+		if (~mtFiles.notEmpty) { ~mtFileMenu.value = 0 };
+		~mtReadout.string = if (~mtFiles.isEmpty) { "no files in " ++ dir.basename }
+			{ ~mtFiles.size.asString ++ " files -- pick one and LOAD" };
+	};
+	~mtLoad = {
+		var path = if (~mtFiles.notEmpty) { ~mtFiles[~mtFileMenu.value] };
+		var jp;
+		path !? {
+			~mtStop.value;
+			~mtBuf !? { ~mtBuf.free; ~mtBuf = nil };
+			~mtTimes = nil; ~mtBpms = nil; ~mtBeats = nil; ~mtTotal = 0; ~mtPos = 0;
+			~mtPath = path;
+			jp = path.splitext[0] ++ ".beats.json";
+			if (File.exists(jp)) {
+				var d = File.readAllString(jp).parseJSON;
+				var ev = d["events"] ? [];
+				~mtTimes = ev.collect { |e| e["t"].asFloat };
+				~mtBpms  = ev.collect { |e| e["bpm"].asFloat };
+				~mtBeats = ev.collect { |e| e["beat"].asFloat };
+				~mtTotal = (d["total_beats"] ? ev.size.asString).asInteger;
+			};
+			~mtBuf = Buffer.read(s, path, action: { |b|
+				~mtDur = b.duration;
+				{ ~mtReadout.string = path.basename.splitext[0] ++ "  " ++ ~mmss.(~mtDur)
+					++ if (~mtTimes.notNil) { "  · " ++ ~mtTotal ++ " beats" } { "  (no beats.json)" }
+					++ "  -- ready" }.defer;
+			});
+		};
+	};
+	~mtPlay = { |on|
+		if (on) {
+			~clickSet.(false);   // one metronome at a time on lane 3
+			if (~mtSynth.isNil and: { ~mtBuf.notNil }) {
+				~mtSynth = Synth(\srMetro, [\buf, ~mtBuf, \start, ~mtPos.clip(0, ~mtDur - 0.1),
+					\amp, ~effLevel.(~mtLane), \pan, ~lanePan[~mtLane],
+					\out, ~srOutBus, \lane, ~mtLane]);
+				~mtSynth.onFree {
+					~mtSynth = nil;
+					if (~mtPos >= (~mtDur - 1)) { ~mtPos = 0 };
+					{ ~mtReadout.string = ~mtReadout.string.replace("playing", "stopped");
+						~mtPlayBtn !? { ~mtPlayBtn.value = 0 } }.defer;
+					~surfRefresh.value;
+				};
+			};
+			if (~mtBuf.isNil) { ~status.("metronome: LOAD a file first") };
+		} {
+			~mtSynth !? { ~mtSynth.free };
+		};
+		~surfRefresh.value;
+	};
+	~mtStop = { ~mtSynth !? { ~mtSynth.free } };
+	~mtRewind = { var was = ~mtSynth.notNil; ~mtStop.value; ~mtPos = 0;
+		if (was) { { ~mtPlay.(true) }.defer(0.1) } };
+	OSCdef(\srMtPos, { |msg|
+		var pos = msg[3];
+		var idx, beat, bpm, str;
+		~mtPos = pos;
+		if (~mtTimes.notNil and: { ~mtTimes.notEmpty }) {
+			idx = (~mtTimes.indexOfGreaterThan(pos) ? ~mtTimes.size) - 1;
+			idx = idx.clip(0, ~mtTimes.size - 1);
+			beat = ~mtBeats[idx].asInteger;
+			bpm = ~mtBpms[idx];
+			str = "beat " ++ beat ++ " / " ++ ~mtTotal ++ "   " ++ bpm.round(0.1) ++ " BPM   ";
+		} { str = "" };
+		str = str ++ ~mmss.(pos) ++ " / " ++ ~mmss.(~mtDur) ++ "  playing";
+		{ ~mtReadout.string = str }.defer;
+	}, '/srMtPos');
+
+	// --- live click (LIVE and GLIDE modes share it) ---
+	~clickSynth = nil;
+	~clickBpm = 30;          // where the click is heading (the control value)
+	~clickBpmNow = 30;       // last reported actual tempo
+	~clickGlide = 1.5;       // LIVE: seconds for a fader move to settle
+	~clickLo = 30; ~clickHi = 80;   // fader 3 range
+	~clickVoice = 0;
+	~clickCurve = 0;         // 0 linear, else exponential-ish (VarLag warp)
+	~clickBeats = 0;
+	~clickStarted = nil;
+	~clickBpmForFader = { |v| ~clickLo + ((~clickHi - ~clickLo) * v.clip(0, 1)) };
+	~clickFaderForBpm = { |b| ((b - ~clickLo) / max(~clickHi - ~clickLo, 1)).clip(0, 1) };
+	~clickSet = { |on|
+		if (on) {
+			~mtStop.value;
+			if (~clickSynth.isNil) {
+				~clickSynth = Synth(\srClick, [\bpm, ~clickBpm, \glide, 0, \voice, ~clickVoice,
+					\amp, ~effLevel.(~mtLane), \pan, ~lanePan[~mtLane],
+					\out, ~srOutBus, \lane, ~mtLane]);
+				~clickBeats = 0;
+				~clickStarted = Main.elapsedTime;
+			};
+		} {
+			~clickSynth !? { ~clickSynth.free; ~clickSynth = nil };
+			~glideEnds = nil;
+			{ ~clickReadout !? { ~clickReadout.string = ~clickReadout.string.replace("running", "stopped") } }.defer;
+		};
+		{ ~clickBtn !? { ~clickBtn.value = ~clickSynth.notNil.asInteger } }.defer;
+		~surfRefresh.value;
+	};
+	// LIVE: the fader sets the tempo; short glide so it never jumps
+	~clickSetBpm = { |bpm|
+		~clickBpm = bpm.clip(20, 300).round(0.1);
+		~glideEnds = nil;
+		~clickSynth !? { ~clickSynth.set(\glide, ~clickGlide, \curve, 0, \bpm, ~clickBpm) };
+		{ ~clickBpmBox !? { ~clickBpmBox.value = ~clickBpm } }.defer;
+	};
+	// GLIDE: ramp from the current tempo to a target over `secs`
+	~glideEnds = nil;
+	~clickGlideTo = { |target, secs|
+		target = target.clip(20, 300);
+		secs = secs.max(0.1);
+		~clickBpm = target;
+		if (~clickSynth.isNil) { ~clickSet.(true) };
+		~clickSynth.set(\glide, secs, \curve, ~clickCurve, \bpm, target);
+		~glideEnds = Main.elapsedTime + secs;
+		{ ~clickBpmBox !? { ~clickBpmBox.value = target } }.defer;
+		~status.("click: gliding " ++ ~clickBpmNow.round(0.1) ++ " -> " ++ target
+			++ " BPM over " ++ secs.round(0.1) ++ " s");
+	};
+	~clickHold = {    // freeze the tempo where it is right now (mid-glide)
+		~clickBpm = ~clickBpmNow.round(0.1);
+		~glideEnds = nil;
+		~clickSynth !? { ~clickSynth.set(\glide, 0, \bpm, ~clickBpm) };
+		{ ~clickBpmBox !? { ~clickBpmBox.value = ~clickBpm } }.defer;
+	};
+	OSCdef(\srClick, { |msg|
+		var left;
+		~clickBeats = msg[3].asInteger;
+		~clickBpmNow = msg[4];
+		left = ~glideEnds !? { (~glideEnds - Main.elapsedTime).max(0) };
+		{ ~clickReadout !? { ~clickReadout.string =
+			"beat " ++ ~clickBeats ++ "   " ++ ~clickBpmNow.round(0.1) ++ " BPM"
+			++ if (left.notNil and: { left > 0.4 }) {
+				"   -> " ++ ~clickBpm ++ " in " ++ ~mmss.(left) } { "" }
+			++ "   " ++ ~mmss.(Main.elapsedTime - (~clickStarted ? Main.elapsedTime))
+			++ "  running" } }.defer;
+	}, '/srClick');
+
+	{
+	}.value;
+
+	// ---------------- LatentFT: lane 4 ----------------
+	~lfSources = [];   // [label -> path]; index 0 is the original when found
+	~lfBufs = Dictionary();
+	~lfSynth = nil; ~lfPos = 0; ~lfX = 0; ~lfDur = 320; ~lfOffB = 0;
+	~lfA = nil; ~lfB = nil;   // paths
+	~lfScan = {
+		var orig = ~lfOriginals.detect { |p| File.exists(p) };
+		~lfSources = [];
+		orig !? { ~lfSources = ~lfSources.add("original phantom_pain" -> orig) };
+		~lfDirs.do { |assoc|
+			~wavsIn.(~soRoot +/+ assoc.value).do { |p|
+				~lfSources = ~lfSources.add(
+					(assoc.key ++ " / " ++ p.basename.splitext[0]) -> p);
+			};
+		};
+		[~lfAMenu, ~lfBMenu].do { |m|
+			m !? {
+				var keep = m.value;
+				m.items = ~lfSources.collect(_.key);
+				if (~lfSources.notEmpty) { m.value = keep.clip(0, ~lfSources.size - 1) };
+			};
+		};
+		if (orig.isNil) { ~status.("latentft: original phantom_pain.wav not found") };
+	};
+	~lfBufFor = { |path, done|
+		var b = ~lfBufs[path];
+		if (b.notNil) { done.(b) } {
+			~lfBufs[path] = Buffer.read(s, path, action: { |bb| done.(bb) });
+		};
+	};
+	~lfReadoutSet = { |str| { ~lfReadout !? { ~lfReadout.string = str } }.defer };
+	~lfPick = { |which, idx|
+		var path = if (~lfSources.notEmpty) { ~lfSources[idx.clip(0, ~lfSources.size - 1)].value };
+		path !? {
+			if (which == \a) { ~lfA = path } { ~lfB = path };
+			// pieces cut from 60 s into the track: line B up with the song clock
+			if (which == \b) {
+				~lfOffB = if (path.basename.contains("60s")) { -60 } { 0 };
+				{ ~lfOffBox !? { ~lfOffBox.value = ~lfOffB } }.defer;
+				~lfSynth !? { ~lfSynth.set(\offB, ~lfOffB) };
+			};
+			~lfReadoutSet.("loading " ++ path.basename ++ " ...");
+			~lfBufFor.(path, { |b|
+				~lfSynth !? { ~lfSynth.set(if (which == \a) { \bufA } { \bufB }, b) };
+				~lfReadoutSet.(~mmss.(~lfPos) ++ "  " ++ path.basename.splitext[0]
+					++ " ready (" ++ ~mmss.(b.duration) ++ ")");
+			});
+		};
+	};
+	~lfPlay = { |on|
+		if (on) {
+			var a = ~lfA !? { ~lfBufs[~lfA] };
+			var b = (~lfB !? { ~lfBufs[~lfB] }) ? a;
+			case
+			{ ~lfSynth.notNil } { }
+			{ a.isNil } { ~status.("latentft: pick source A (and let it load) first") }
+			{
+				~lfDur = max(a.duration, b.duration - ~lfOffB);
+				~lfSynth = Synth(\srLfX, [\bufA, a, \bufB, b, \xf, ~lfX, \offB, ~lfOffB,
+					\start, ~lfPos.clip(0, ~lfDur - 0.1), \dur, ~lfDur,
+					\amp, ~effLevel.(~lfLane), \pan, ~lanePan[~lfLane],
+					\out, ~srOutBus, \lane, ~lfLane]);
+				~lfSynth.onFree {
+					~lfSynth = nil;
+					if (~lfPos >= (~lfDur - 1.5)) { ~lfPos = 0 };
+					~lfReadoutSet.(~mmss.(~lfPos) ++ " / " ++ ~mmss.(~lfDur) ++ "  stopped");
+					~surfRefresh.value;
+				};
+			};
+		} {
+			~lfSynth !? { ~lfSynth.free };
+		};
+		~surfRefresh.value;
+	};
+	~lfLocate = { |secs|
+		var was = ~lfSynth.notNil;
+		~lfPos = secs.max(0);
+		if (was) { ~lfSynth.free; { ~lfPlay.(true) }.defer(0.1) }
+		{ ~lfReadoutSet.(~mmss.(~lfPos) ++ "  cued") };
+	};
+	~lfSetX = { |v, fromGui = false|
+		~lfX = v.clip(0, 1);
+		~lfSynth !? { ~lfSynth.set(\xf, ~lfX) };
+		{
+			~lfXSlider !? { ~lfXSlider.value = ~lfX };
+			~lfXBox !? { ~lfXBox.value = ~lfX.round(0.01) };
+		}.defer;
+	};
+	OSCdef(\srLfPos, { |msg|
+		~lfPos = msg[3];
+		~lfReadoutSet.(~mmss.(~lfPos) ++ " / " ++ ~mmss.(~lfDur)
+			++ "   A " ++ (1 - ~lfX).round(0.01) ++ " · B " ++ ~lfX.round(0.01) ++ "  playing");
+	}, '/srLfPos');
+	// section cues from the arch map (macro sections, letter + ordinal)
+	~lfSections = [];
+	if (File.exists(~lfFormFile)) {
+		var d = File.readAllString(~lfFormFile).parseJSON;
+		(d["macro"] ? []).do { |m|
+			var letter = m["letter"] ? "";
+			var role = (m["role"] ? "").asString;
+			var label = case
+				{ letter != "" } { letter ++ (m["ordinal"] ? "") }
+				{ role == "intro" } { "in" }
+				{ role == "outro" } { "out" }
+				{ (m["text"] ? role).asString.keep(4) };
+			~lfSections = ~lfSections.add(label -> m["t_start"].asFloat);
+		};
+	};
+
+	// everything the pane players own -- the transport STOP and the window
+	// close both go through here
+	~panePlaying = { |i|
+		case
+		{ i == ~wsLane } { ~wsSynth.notNil }
+		{ i == ~dyLane } { ~dyadAuto.notNil }
+		{ i == ~mtLane } { ~mtSynth.notNil or: { ~clickSynth.notNil } }
+		{ i == ~lfLane } { ~lfSynth.notNil }
+		{ false };
+	};
+	~paneStop = { |i|
+		case
+		{ i == ~wsLane } { ~wsPlay.(false) }
+		{ i == ~dyLane } { ~dyadAutoSet.(false) }
+		{ i == ~mtLane } { ~mtStop.value; ~clickSet.(false) }
+		{ i == ~lfLane } { ~lfPlay.(false) };
+	};
+	~paneStart = { |i|
+		case
+		{ i == ~wsLane } { ~wsPlay.(true) }
+		{ i == ~dyLane } { ~dyadAutoSet.(true) }
+		{ i == ~mtLane } { if (~mtBuf.notNil) { ~mtPlay.(true) } { ~clickSet.(true) } }
+		{ i == ~lfLane } { ~lfPlay.(true) };
+	};
+	~panesStopAll = { 4.do { |i| ~paneStop.(i) } };
+	~paneApplyMix = { |i|
+		case
+		{ i == ~wsLane } { ~wsSynth !? { ~wsSynth.set(\amp, ~effLevel.(i), \pan, ~lanePan[i]) } }
+		{ i == ~dyLane } { ~dyadGroup.set(\amp, ~effLevel.(i)) }
+		{ i == ~mtLane } {
+			~mtSynth !? { ~mtSynth.set(\amp, ~effLevel.(i), \pan, ~lanePan[i]) };
+			~clickSynth !? { ~clickSynth.set(\amp, ~effLevel.(i), \pan, ~lanePan[i]) } }
+		{ i == ~lfLane } { ~lfSynth !? { ~lfSynth.set(\amp, ~effLevel.(i), \pan, ~lanePan[i]) } };
+	};
+
+	{
+	}.value;
+
+	// ----- tab 4: wall of sound -----
+	~wsScan.value;
+	~wsMenu = PopUpMenu().items_(~wsVersions.collect(_.key)).fixedWidth_(~stripW - 8)
+	.action_({ |m|
+		var was = ~wsSynth.notNil;
+		~wsPath = ~wsVersions[m.value].value;
+		if (was) { ~wsLocate.(~wsPos) };
+	});
+	~wsPlayBtn = ~paneToggle.("play", "pause").action_({ |b| ~wsPlay.(b.value == 1) });
+	~wsLocBox = NumberBox().clipLo_(0).clipHi_(720).step_(10).scroll_step_(10)
+	.decimals_(0).value_(0).fixedWidth_(56);
+	~wsReadout = StaticText().string_("0:00 / 12:00").fixedHeight_(16);
+	~wsCol = View().fixedWidth_(~stripW).layout_(VLayout(
+		StaticText().string_("lane 1 · render").font_(Font.default.boldVariant).fixedHeight_(16),
+		~wsMenu,
+		HLayout(~wsPlayBtn, ~paneBtn.("|◀", 30).action_({ ~wsLocate.(0) }),
+			~paneBtn.("rescan", 54).action_({ ~wsScan.value; ~status.("wall: rescanned renders") })),
+		HLayout(StaticText().string_("go to s").fixedWidth_(46), ~wsLocBox,
+			~paneBtn.("go", 34).action_({ ~wsLocate.(~wsLocBox.value) })),
+		~wsReadout,
+		StaticText().string_("mp3 = 48 kHz stand-in until the\n96 kHz wav lands; rescan then.")
+			.fixedHeight_(30),
+		nil
+	).spacing_(3));
+	~dyadBtns = 24.collect { |k|
+		Button().states_([[(k + 1).asString.padLeft(2, "0"), Color.gray(0.3), Color.white]])
+		.fixedWidth_(46).fixedHeight_(22).action_({ ~dyadFire.(k) });
+	};
+	~dyadAutoBtn = ~paneToggle.("AUTO", "AUTO", 62).action_({ |b| ~dyadAutoSet.(b.value == 1) });
+	~dyadReadout = StaticText().string_(if (~wsLoadStems) { "loading stems..." } { "stems not loaded" })
+	.fixedHeight_(16);
+	~dyadCol = View().layout_(VLayout(
+		StaticText().string_("lane 2 · live dyads  (fader 2 = density; apex envelope, random azimuth)")
+			.font_(Font.default.boldVariant).fixedHeight_(16),
+		HLayout(*(~dyadBtns[0..7]) ++ [nil]).spacing_(3),
+		HLayout(*(~dyadBtns[8..15]) ++ [nil]).spacing_(3),
+		HLayout(*(~dyadBtns[16..23]) ++ [nil]).spacing_(3),
+		HLayout(~dyadAutoBtn,
+			~paneBtn.("cut all", 62).action_({ ~dyadCut.value }),
+			~paneBtn.("load stems", 80).action_({ ~dyadLoad.value }), nil),
+		~dyadReadout,
+		nil
+	).spacing_(4));
+	~wsTab = View().layout_(HLayout(
+		~paneHeader.("WALL OF SOUND", "bell_12min + live dyads"),
+		~wsCol, ~dyadCol, nil));
+
+	{
+	}.value;
+
+	// ----- tab 5: metronomes -----
+	~mtSetMenu = PopUpMenu().items_(~mtSets.collect(_.key)).fixedWidth_(130)
+	.action_({ ~mtScan.value });
+	~mtVoiceMenu = PopUpMenu().items_(~mtVoices).fixedWidth_(70).action_({ ~mtScan.value });
+	~mtFileMenu = PopUpMenu().items_([]).fixedWidth_(300);
+	~mtReadout = StaticText().string_("pick a set, voice and file, then LOAD")
+	.font_(Font.default.boldVariant).fixedHeight_(18);
+	~mtPlayBtn = ~paneToggle.("play", "stop", 62).action_({ |b| ~mtPlay.(b.value == 1) });
+	// live click controls
+	~clickBpmBox = NumberBox().clipLo_(20).clipHi_(300).step_(1).scroll_step_(1)
+	.decimals_(1).value_(~clickBpm).fixedWidth_(60)
+	.action_({ |nb| ~clickSetBpm.(nb.value) });
+	~clickLoBox = NumberBox().clipLo_(20).clipHi_(300).step_(1).scroll_step_(1)
+	.decimals_(0).value_(~clickLo).fixedWidth_(48)
+	.action_({ |nb| ~clickLo = nb.value; ~surfRefresh.value });
+	~clickHiBox = NumberBox().clipLo_(20).clipHi_(300).step_(1).scroll_step_(1)
+	.decimals_(0).value_(~clickHi).fixedWidth_(48)
+	.action_({ |nb| ~clickHi = nb.value; ~surfRefresh.value });
+	~clickGlideBox = NumberBox().clipLo_(0).clipHi_(30).step_(0.5).scroll_step_(0.5)
+	.decimals_(1).value_(~clickGlide).fixedWidth_(48)
+	.action_({ |nb| ~clickGlide = nb.value });
+	~clickVoiceMenu = PopUpMenu().items_(~mtVoices).fixedWidth_(70)
+	.action_({ |m| ~clickVoice = m.value; ~clickSynth !? { ~clickSynth.set(\voice, m.value) } });
+	~clickBtn = ~paneToggle.("click", "click", 62).action_({ |b| ~clickSet.(b.value == 1) });
+	~glideTargetBox = NumberBox().clipLo_(20).clipHi_(300).step_(1).scroll_step_(1)
+	.decimals_(0).value_(80).fixedWidth_(52);
+	~glideSecsBox = NumberBox().clipLo_(1).clipHi_(1200).step_(5).scroll_step_(5)
+	.decimals_(0).value_(120).fixedWidth_(52);
+	~glideCurveMenu = PopUpMenu().items_(["linear", "exp"]).fixedWidth_(64)
+	.action_({ |m| ~clickCurve = if (m.value == 0) { 0 } { 3 } });
+	~clickReadout = StaticText().string_("click stopped").font_(Font.default.boldVariant)
+	.fixedHeight_(18);
+	~mtTab = View().layout_(HLayout(
+		~paneHeader.("METRONOMES", "lane 3 · files / live / glide"),
+		View().layout_(VLayout(
+			StaticText().string_("FILES -- pre-rendered Callender sweeps (exact, end on a downbeat)")
+				.font_(Font.default.boldVariant).fixedHeight_(16),
+			HLayout(StaticText().string_("set").fixedWidth_(30), ~mtSetMenu,
+				StaticText().string_("voice").fixedWidth_(36), ~mtVoiceMenu,
+				~paneBtn.("rescan", 54).action_({ ~mtScan.value }), nil),
+			HLayout(StaticText().string_("file").fixedWidth_(30), ~mtFileMenu,
+				~paneBtn.("LOAD", 54).action_({ ~mtLoad.value }),
+				~mtPlayBtn, ~paneBtn.("|◀", 30).action_({ ~mtRewind.value }), nil),
+			~mtReadout,
+			StaticText().string_("").fixedHeight_(6),
+			StaticText().string_("LIVE -- fader 3 steers the tempo inside the range; glide = settle time")
+				.font_(Font.default.boldVariant).fixedHeight_(16),
+			HLayout(~clickBtn, StaticText().string_("voice").fixedWidth_(36), ~clickVoiceMenu,
+				StaticText().string_("BPM").fixedWidth_(28), ~clickBpmBox,
+				StaticText().string_("range").fixedWidth_(38), ~clickLoBox,
+				StaticText().string_("-").fixedWidth_(8), ~clickHiBox,
+				StaticText().string_("glide s").fixedWidth_(44), ~clickGlideBox, nil),
+			StaticText().string_("GLIDE -- ramp from the current tempo to a target; GO again to re-target mid-ramp")
+				.font_(Font.default.boldVariant).fixedHeight_(16),
+			HLayout(StaticText().string_("to").fixedWidth_(20), ~glideTargetBox,
+				StaticText().string_("BPM in").fixedWidth_(42), ~glideSecsBox,
+				StaticText().string_("s").fixedWidth_(10), ~glideCurveMenu,
+				~paneBtn.("GO", 44).action_({
+					~clickGlideTo.(~glideTargetBox.value, ~glideSecsBox.value) }),
+				~paneBtn.("HOLD", 44).action_({ ~clickHold.value }),
+				~paneBtn.("30→80 / 3:00", 84).action_({
+					~clickSetBpm.(30); ~clickSet.(true); ~clickGlideTo.(80, 180) }),
+				nil),
+			~clickReadout,
+			nil
+		).spacing_(4)),
+		nil));
+	~mtScan.value;
+
+	{
+	}.value;
+
+	// ----- tab 6: LatentFT -----
+	~lfScan.value;
+	~lfAMenu = PopUpMenu().items_(~lfSources.collect(_.key)).fixedWidth_(360)
+	.action_({ |m| ~lfPick.(\a, m.value) });
+	~lfBMenu = PopUpMenu().items_(~lfSources.collect(_.key)).fixedWidth_(360)
+	.action_({ |m| ~lfPick.(\b, m.value) });
+	~lfOffBox = NumberBox().clipLo_(-400).clipHi_(400).step_(1).scroll_step_(1)
+	.decimals_(1).value_(0).fixedWidth_(56)
+	.action_({ |nb| ~lfOffB = nb.value; ~lfSynth !? { ~lfSynth.set(\offB, ~lfOffB) } });
+	~lfXSlider = Slider().orientation_(\horizontal).fixedWidth_(300).fixedHeight_(20)
+	.step_(1/100).value_(0).action_({ |sl| ~lfSetX.(sl.value, true) });
+	~lfXBox = NumberBox().clipLo_(0).clipHi_(1).step_(0.05).scroll_step_(0.05)
+	.decimals_(2).value_(0).fixedWidth_(50).action_({ |nb| ~lfSetX.(nb.value, true) });
+	~lfLocBox = NumberBox().clipLo_(0).clipHi_(400).step_(5).scroll_step_(5)
+	.decimals_(0).value_(0).fixedWidth_(56);
+	~lfPlayBtn = ~paneToggle.("play", "stop", 62).action_({ |b| ~lfPlay.(b.value == 1) });
+	~lfReadout = StaticText().string_("pick A and B (they load on selection)")
+	.font_(Font.default.boldVariant).fixedHeight_(18);
+	~lfCueBtns = ~lfSections.collect { |sec|
+		~paneBtn.(sec.key, 44).action_({ ~lfLocate.(sec.value) });
+	};
+	~lfTab = View().layout_(HLayout(
+		~paneHeader.("LATENTFT", "lane 4 · sample-locked A/B"),
+		View().layout_(VLayout(
+			HLayout(StaticText().string_("A").fixedWidth_(16), ~lfAMenu, nil),
+			HLayout(StaticText().string_("B").fixedWidth_(16), ~lfBMenu,
+				StaticText().string_("B offset s").fixedWidth_(60), ~lfOffBox, nil),
+			HLayout(StaticText().string_("A ⟷ B").fixedWidth_(44), ~lfXSlider, ~lfXBox,
+				StaticText().string_("(fader 4)").fixedWidth_(60), nil),
+			HLayout(~lfPlayBtn, ~paneBtn.("|◀", 30).action_({ ~lfLocate.(0) }),
+				StaticText().string_("go to s").fixedWidth_(46), ~lfLocBox,
+				~paneBtn.("go", 34).action_({ ~lfLocate.(~lfLocBox.value) }),
+				~paneBtn.("rescan", 54).action_({ ~lfScan.value }), nil),
+			HLayout(StaticText().string_("cue").fixedWidth_(30), *~lfCueBtns ++ [nil]).spacing_(3),
+			~lfReadout,
+			nil
+		).spacing_(4)),
+		nil));
+	// default A = original, B = the reconstruct if present
+	if (~lfSources.notEmpty) {
+		var bIdx = ~lfSources.detectIndex { |a| a.value.basename.contains("reconstruct_fullsong") } ? 0;
+		~lfAMenu.value = 0; ~lfPick.(\a, 0);
+		~lfBMenu.value = bIdx; ~lfPick.(\b, bIdx);
+	};
+	if (~wsLoadStems) { ~dyadLoad.value };
+
+	}.value;
+
 	// ----- control surface: the nanoKONTROL2 IS the interface -----
 	// Four strips, the hardware's own geometry, one per lane: knob on top,
 	// vertical fader under it, S/M/R beneath. The transport block on the left
@@ -1861,8 +2639,61 @@ s.waitForBoot {
 		};
 	};
 
+	// faders 1-4 mean something different per tab. On the set panes only the
+	// pane's own lane has a fader parameter; the others read "--" and do nothing.
+	~paneFaderOwner = { |i|
+		case
+		{ (~curTab == ~tabWs) and: { i == ~dyLane } } { \density }
+		{ (~curTab == ~tabMt) and: { i == ~mtLane } } { \clickbpm }
+		{ (~curTab == ~tabLf) and: { i == ~lfLane } } { \xfade }
+		{ nil };
+	};
 	~surfFaderName = { |i|
-		if (~curTab == ~tabCc) { "grain s" } { "morph" };
+		case
+		{ ~curTab == ~tabCc } { "grain s" }
+		{ ~curTab >= ~tabWs } {
+			switch (~paneFaderOwner.(i),
+				\density, { "density" }, \clickbpm, { "live BPM" }, \xfade, { "A <> B" }, { "--" })
+		}
+		{ "morph" };
+	};
+	~surfFaderVal = { |i|
+		case
+		{ ~curTab == ~tabCc } { ~grainToFader.(~laneGrain[i]) }
+		{ ~curTab >= ~tabWs } {
+			switch (~paneFaderOwner.(i),
+				\density, { ~dyadDensity },
+				\clickbpm, { ~clickFaderForBpm.(~clickBpm) },
+				\xfade, { ~lfX }, { 0 })
+		}
+		{ ~laneMorph[i] / 10 };
+	};
+	~surfFaderText = { |i|
+		case
+		{ ~curTab == ~tabCc } { ~laneGrain[i].round(0.01).asString }
+		{ ~curTab >= ~tabWs } {
+			switch (~paneFaderOwner.(i),
+				\density, { "~" ++ ~dyadIvalFor.(~dyadDensity).round(0.1) ++ " s" },
+				\clickbpm, { ~clickBpm.round(0.1).asString },
+				\xfade, { ~lfX.round(0.01).asString }, { "--" })
+		}
+		{ ~laneMorph[i].round(0.1).asString };
+	};
+	// one entry point for the on-screen fader AND the MIDI fader
+	~surfFaderSet = { |i, v, fromGui = false|
+		case
+		{ ~curTab == ~tabCc } {
+			~setLaneGrain.(i, ~grainFor.(v));
+			if (fromGui) { ~surfRefresh.value } { ~midiDirty = true };
+		}
+		{ ~curTab >= ~tabWs } {
+			switch (~paneFaderOwner.(i),
+				\density, { ~dyadSetDensity.(v) },
+				\clickbpm, { ~clickSetBpm.(~clickBpmForFader.(v)) },
+				\xfade, { ~lfSetX.(v, fromGui) });
+			if (fromGui) { ~surfRefresh.value } { ~midiDirty = true };
+		}
+		{ ~setMorph.(i, v * 10, fromGui) };
 	};
 
 	// one selection drives every tab's settings panel, so switching tabs keeps
@@ -1876,7 +2707,7 @@ s.waitForBoot {
 
 	~lanePlaying = { |i|
 		~laneMorphSynth[i].notNil or: { ~laneLcSynth[i].notNil }
-			or: { ~laneRenderSynth[i].notNil };
+			or: { ~laneRenderSynth[i].notNil } or: { ~panePlaying.(i) };
 	};
 
 	// play means "hear this lane" -- what that is depends on the tab:
@@ -1889,8 +2720,10 @@ s.waitForBoot {
 				~laneRenderSynth[i] = nil };
 			if (~curTab == ~tabCc and: { ~laneShimUp[i] }) {
 			~shimAddr.(i).sendMsg("/stop") };
+			~paneStop.(i);
 		} {
 			case
+			{ ~curTab >= ~tabWs } { ~paneStart.(i) }
 			{ ~curTab == ~tabCc } { ~shimPlay.(i) }
 			{ (~curTab == ~tabLc) and: { ~laneLcBuf[i].notNil }
 				and: { ~laneSlotBufs[i].isNil } } {
@@ -1912,18 +2745,14 @@ s.waitForBoot {
 	~surfRefresh = {
 		{
 			var anyPlaying = ~laneMorphSynth.any(_.notNil)
-				or: { ~laneLcSynth.any(_.notNil) };
+				or: { ~laneLcSynth.any(_.notNil) } or: { (0..3).any { |i| ~panePlaying.(i) } };
 			var busy = ~genRunning or: { ~lcRunning } or: { ~chainRunning };
 			4.do { |i|
 				~surfKnobs[i].value = ~laneLevel[i];
 				~surfKnobTexts[i].string =
 					(~laneLevel[i] * 100).round.asInteger.asString;
-				~surfFaders[i].value = if (~curTab == ~tabCc) {
-					~grainToFader.(~laneGrain[i]);
-				} { ~laneMorph[i] / 10 };
-				~surfFaderTexts[i].string = if (~curTab == ~tabCc) {
-					~laneGrain[i].round(0.01).asString;
-				} { ~laneMorph[i].round(0.1).asString };
+				~surfFaders[i].value = ~surfFaderVal.(i);
+				~surfFaderTexts[i].string = ~surfFaderText.(i);
 				~surfFaderLabels[i].string = ~surfFaderName.(i);
 				~surfPanBoxes[i].value = ~lanePan[i].round(0.01);
 				~surfPlayBtns[i].value = ~lanePlaying.(i).asInteger;
@@ -1956,12 +2785,7 @@ s.waitForBoot {
 		.action_({ |nb| ~lanePan[i] = nb.value; ~applyMix.(i) });
 		~surfFaders[i] = Slider().orientation_(\vertical)
 		.fixedWidth_(30).fixedHeight_(120).step_(1/80).value_(0)
-		.action_({ |sl|
-			if (~curTab == ~tabCc) {
-				~setLaneGrain.(i, ~grainFor.(sl.value));
-				~surfRefresh.value;
-			} { ~setMorph.(i, sl.value * 10, true) };
-		});
+		.action_({ |sl| ~surfFaderSet.(i, sl.value, true) });
 		~surfFaderLabels[i] = StaticText().string_("morph").align_(\center)
 		.fixedWidth_(64).fixedHeight_(14);
 		~surfFaderTexts[i] = StaticText().string_("--").align_(\center)
@@ -2011,7 +2835,7 @@ s.waitForBoot {
 	.fixedWidth_(40).fixedHeight_(26).action_({ ~playAllLanes.(true) });
 	~tStopBtn = Button().states_([["■", Color.gray(0.3), Color.white]])
 	.fixedWidth_(40).fixedHeight_(26).action_({
-		~playAllLanes.(false); ~lcPlayAll.(false);
+		~playAllLanes.(false); ~lcPlayAll.(false); ~panesStopAll.value;
 		~sweepRout !? { ~sweepRout.stop; ~sweepRout = nil };
 		~surfRefresh.value;
 	});
@@ -2030,8 +2854,8 @@ s.waitForBoot {
 	.action_({ ~runMorphSweep.(0, 10) });
 	~tRewBtn = ~tSmall.("◀◀").action_({ ~runMorphSweep.(10, 0) });
 	~tFfBtn  = ~tSmall.("▶▶").action_({ ~runMorphSweep.(0, 10) });
-	~tTrkPrev = ~tSmall.("◀", 30).action_({ ~setTab.((~curTab - 1).wrap(0, 2)) });
-	~tTrkNext = ~tSmall.("▶", 30).action_({ ~setTab.((~curTab + 1).wrap(0, 2)) });
+	~tTrkPrev = ~tSmall.("◀", 30).action_({ ~setTab.((~curTab - 1).wrap(0, ~tabBtns.size - 1)) });
+	~tTrkNext = ~tSmall.("▶", 30).action_({ ~setTab.((~curTab + 1).wrap(0, ~tabBtns.size - 1)) });
 	~tMarkSet = ~tSmall.("warm", 52).action_({ ~warmup.value });
 
 	~transportBlock = VLayout(
@@ -2055,8 +2879,9 @@ s.waitForBoot {
 	);
 
 	// ----- assemble -----
-	~tabStack = StackLayout(~feTab, ~lcTab, ~ccTab);
-	~tabBtns = ["FLOWEDIT MORPH", "LATENT COLLAGE", "CONCATENATOR"].collect { |name, k|
+	~tabStack = StackLayout(~feTab, ~lcTab, ~ccTab, ~wsTab, ~mtTab, ~lfTab);
+	~tabBtns = ["FLOWEDIT MORPH", "LATENT COLLAGE", "CONCATENATOR",
+		"WALL OF SOUND", "METRONOMES", "LATENTFT"].collect { |name, k|
 		Button().states_([[name, Color.gray(0.4), Color.white],
 			[name, Color.white, Color.black]])
 		.action_({ ~setTab.(k) })
@@ -2103,13 +2928,16 @@ s.waitForBoot {
 		loop { 0.5.wait; ~surfRefresh.value };
 	}.play(AppClock);
 
-	// keyboard fallback for tab switching (1 / 2). Text fields swallow the
+	// keyboard fallback for tab switching (1-6). Text fields swallow the
 	// key while they have focus, so typing in a prompt won't switch tabs.
 	~win.view.keyDownAction = { |view, char|
 		case
 		{ char == $1 } { ~setTab.(~tabFe) }
 		{ char == $2 } { ~setTab.(~tabLc) }
-		{ char == $3 } { ~setTab.(~tabCc) };
+		{ char == $3 } { ~setTab.(~tabCc) }
+		{ char == $4 } { ~setTab.(~tabWs) }
+		{ char == $5 } { ~setTab.(~tabMt) }
+		{ char == $6 } { ~setTab.(~tabLf) };
 	};
 
 	// ----- meters -----
@@ -2236,8 +3064,8 @@ s.waitForBoot {
 				if (num == c) { ~lcGenerateLanes.([i]) } };
 			~srMidi.morphBtns.do { |c, i|
 				if (num == c) { ~generateLanes.([i]) } };
-			if (num == ~srMidi.tabPrev) { ~setTab.((~curTab - 1).wrap(0, 2)) };
-			if (num == ~srMidi.tabNext) { ~setTab.((~curTab + 1).wrap(0, 2)) };
+			if (num == ~srMidi.tabPrev) { ~setTab.((~curTab - 1).wrap(0, ~tabBtns.size - 1)) };
+			if (num == ~srMidi.tabNext) { ~setTab.((~curTab + 1).wrap(0, ~tabBtns.size - 1)) };
 			~surfRefresh !? { ~surfRefresh.value };
 		};
 	};
@@ -2254,12 +3082,7 @@ s.waitForBoot {
 		// fader: morph on the FlowEdit and collage tabs, chase speed on
 		// the concatenator tab (the only one with a live parameter)
 		~srMidi.gestureSliders.do { |c, i|
-			if (cc == c) {
-				if (~curTab == ~tabCc) {
-					~setLaneGrain.(i, ~grainFor.(v));
-					~midiDirty = true;
-				} { ~setMorph.(i, v * 10) };
-			};
+			if (cc == c) { ~surfFaderSet.(i, v, false) };
 		};
 		// knob directly above each fader = that lane's volume
 		~srMidi.volumeKnobs.do { |c, i|
@@ -2314,6 +3137,15 @@ s.waitForBoot {
 			~laneBuf[i] !? (_.free);
 		};
 		~stopCorpusRec.value;
+		// set panes
+		~dyadAuto !? (_.stop);
+		~wsSynth !? (_.free); ~mtSynth !? (_.free); ~clickSynth !? (_.free); ~lfSynth !? (_.free);
+		~dyadGroup !? (_.free);
+		~wsDiskBuf !? { |b| b.close; b.free };
+		~dyadBufs.do { |b| b !? (_.free) };
+		~mtBuf !? (_.free);
+		~lfBufs.do { |b| b.free }; ~lfBufs = Dictionary();
+		OSCdef(\srWsPos).free; OSCdef(\srMtPos).free; OSCdef(\srClick).free; OSCdef(\srLfPos).free;
 		~meterSynth !? (_.free);
 		~recTimer !? (_.stop);
 		~midiMirror !? (_.stop);
@@ -2357,6 +3189,6 @@ s.waitForBoot {
 	};
 
 	~status.("ready -- session " ++ ~srSession.basename
-		++ " | arm lanes, REC, then GENERATE (tab 1) or start shims (tab 2)");
+		++ " | tabs 4-6: wall of sound / metronomes / latentft (keys 4 5 6)");
 };
 )

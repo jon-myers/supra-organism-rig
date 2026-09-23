@@ -1,11 +1,43 @@
-# supra-organism rig — handoff (paused 2026-09-23, mid-afternoon, on the MIT laptop)
+# supra-organism rig — handoff (updated 2026-09-23 on the nyc Mac; panes BUILT)
 
 **Goal (Jon, 2026-09-23):** one live SuperCollider patch for tonight's rehearsal that builds on the
 existing studio rig (FlowEdit morph + latent collage + concatenator, 4-lane capture strip,
 nanoKONTROL2) and adds panes for **wall of sound**, **metronomes**, and the **LatentFT pieces**.
-Jon: "I need a live supercollider patch where I can do all this stuff."
 
-Work was paused right after the survey below; **no new panes have been written yet.**
+## State: tabs 4-6 are written and pass a live end-to-end test on this Mac
+
+`rig.scd` now has six tabs. The new ones each own ONE lane, so the strips, the nanoKONTROL2
+S-row (play), volume knobs, pan, mute/solo and the output meters keep working unchanged:
+
+| tab | key | lane | what |
+|---|---|---|---|
+| WALL OF SOUND | 4 | 1 | bell_12min render streamed from disk (`VDiskIn`, 96 kHz wav rate-scaled, mp3 stand-in when the wav has not synced). Version menu A/B/C × curve/open, play/pause, go-to-seconds, 1 Hz mm:ss readout, rescan. |
+| WALL OF SOUND | 4 | 2 | live dyads: 24 stem buttons + AUTO. Mirrors compose.py: apex envelope (gaussian apex 0.5 ± 0.125, clipped 0.25–0.75), random azimuth, 0 to −6 dB, Tenney-style stem choice (weight = age²). **Fader 2 = density** (mean gap 60 s → 2 s). "cut all" frees sounding dyads. Stems load at boot (`~wsLoadStems`, ~630 MB). |
+| METRONOMES | 5 | 3 | three modes on one lane: **FILES** (set / voice / file menus → LOAD → play; readout "beat n / N · BPM · mm:ss" stepped at 2 Hz from the `.beats.json`); **LIVE** (server-side click, `VarLag` glide so the tempo never steps; **fader 3 steers BPM inside the lo–hi range**, glide s = settle time; voice tock/beep synthesised); **GLIDE** (target BPM + seconds, GO ramps from the current tempo, linear or exp; GO again re-targets mid-ramp; HOLD freezes; a "30→80 / 3:00" preset). File playback and the click are exclusive on lane 3. |
+| LATENTFT | 6 | 4 | A and B source menus (original phantom_pain + every wav found under the LatentFT out dirs), loaded on selection, read by ONE clock in seconds so 22050 and 44100 Hz files stay sample-locked; **fader 4 = equal-power crossfade** (also the on-screen slider); play/stop, go-to-seconds, section cue buttons from `phantom_pain_form/out/form_compact.json` (in, A1, B1, A2, B2, A3, C1, out); B offset box (auto −60 for the `*60s` pieces). |
+
+Transport ■ stops everything including the panes. The play button on a strip starts that lane's pane
+player when a set tab is showing, and the old morph/collage/concat player on tabs 1–3.
+
+Implementation notes:
+- The new code sits between the latent-collage section and the control surface, in six
+  `{ ... }.value` blocks. **That wrapping is load-bearing:** the `s.waitForBoot { }` function hit
+  sclang's 256-entry literal/selector table ("Selector table too big") when the pane code was
+  inline. Any further pane must go inside one of those blocks or a new one.
+- Fader semantics are now centralised: `~surfFaderName / ~surfFaderVal / ~surfFaderText /
+  ~surfFaderSet` handle every tab; the GUI fader and the MIDI fader both call `~surfFaderSet`.
+- Pane hooks: `~panePlaying / ~paneStart / ~paneStop / ~panesStopAll / ~paneApplyMix`, called
+  from `~lanePlaying`, `~laneTogglePlay`, the STOP button and `~applyMix`.
+- Position readouts are `SendReply` → `OSCdef` (`/srWsPos` 1 Hz, `/srMtPos` 2 Hz, `/srClick` 2 Hz,
+  `/srLfPos` 1 Hz) into StaticTexts; no animation anywhere.
+- Headless test driver used here: a script that `executeFile`s rig.scd, waits for `~lfTab`,
+  exercises every pane and exits (see the git log of 2026-09-23). Compile check:
+  `thisProcess.interpreter.compile(File.readAllString(p))` is nil on a parse error.
+
+Not done / to check at the venue: the output device (`~srOutDevice` is nil = system default);
+the wall pane at 96 kHz reads at rate 2 on a 48 kHz server — fine, or set `~srSampleRate = 96000`;
+the mp3 stand-ins are 48 kHz. The laptop → nyc sync had only delivered `A_dyads_curve.wav` of the
+six bell wavs when this was written and no rsync was running any more (`.sync_done` absent).
 
 ## What is in this repo
 
@@ -76,7 +108,7 @@ README: `metronomes/README.md` (Callender 2001 method; files end exactly on 80.0
   outro 4+5 bars; bar times in `phantom_pain_form/out/form_compact.json`.
 Notes: `.../worktrees/latentft/LATENTFT.md`. The 95-render knob grid is ready but NOT launched.
 
-## Proposed next steps (not started)
+## Original plan (2026-09-23 afternoon) — now implemented as above
 
 1. Evaluate `rig.scd` once on the target machine to confirm the relative paths and server boot.
 2. Add a **PLAYERS / SET** tab family: (a) wall of sound: version menu (A/B/C × curve/open),
