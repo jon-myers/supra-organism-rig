@@ -9,7 +9,8 @@ Select all, evaluate.
 (
 ~msInDevice  = "MacBook Pro Microphone";   // nil = system default
 ~msOutDevice = "External Headphones";      // nil = system default
-~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
+~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
+~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
 
