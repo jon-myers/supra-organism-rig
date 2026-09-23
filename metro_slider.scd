@@ -16,6 +16,7 @@ Select all, evaluate.
 ~msTargetHz = 4;    // 'target' line updates per second while you slide
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
+~msAccentOn = true; // false = every beat sounds the same (toggle in the window)
 
 s = Server.default;
 ~msInDevice  !? { s.options.inDevice  = ~msInDevice };
@@ -59,6 +60,7 @@ s.waitForBoot {
 	}).add;
 	s.sync;
 
+	~msAccentRatio = { if (~msAccentOn) { ~msAccent } { 1 } };
 	~msToBpm  = { |v| ~msLo * ((~msHi / ~msLo) ** v.clip(0, 1)) };
 	~msToPos  = { |b| ((b / ~msLo).log / (~msHi / ~msLo).log).clip(0, 1) };
 	~msSet = { |b|
@@ -71,7 +73,7 @@ s.waitForBoot {
 		~msSynth ?? {
 			~msBeats = 0;
 			~msSynth = Synth(\msClick, [\bpm, ~msBpm, \glide, 0, \amp, ~msAmp, \voice, ~msVoice,
-				\cycle, ~msCycle, \accent, ~msAccent, \readhz, ~msReadHz]);
+				\cycle, ~msCycle, \accent, ~msAccentRatio.value, \readhz, ~msReadHz]);
 		};
 		{ ~msRunBtn.value = 1 }.defer;
 	};
@@ -112,6 +114,11 @@ s.waitForBoot {
 	~msCycleBox = NumberBox().clipLo_(1).clipHi_(64).step_(1).scroll_step_(1).decimals_(0)
 		.value_(~msCycle).fixedWidth_(50)
 		.action_({ |nb| ~msCycle = nb.value.asInteger; ~msSynth !? { ~msSynth.set(\cycle, ~msCycle) } });
+	~msAccentBtn = Button().states_([["downbeat: same", Color.black, Color.white],
+		["downbeat: HIGH", Color.white, Color.blue(0.5)]]).fixedWidth_(120)
+		.value_(~msAccentOn.asInteger)
+		.action_({ |b| ~msAccentOn = (b.value == 1);
+			~msSynth !? { ~msSynth.set(\accent, ~msAccentRatio.value) } });
 	~msVoiceMenu = PopUpMenu().items_(["tock", "beep"]).fixedWidth_(80)
 		.action_({ |m| ~msVoice = m.value; ~msSynth !? { ~msSynth.set(\voice, ~msVoice) } });
 	~msRunBtn = Button().states_([["▶ start", Color.black, Color.white],
@@ -124,7 +131,7 @@ s.waitForBoot {
 			Button().states_([["back to 30", Color.black, Color.white]]).fixedWidth_(90)
 				.action_({ ~msSlider.value = ~msToPos.(30); ~msSet.(30) }),
 			nil,
-			StaticText().string_("beats/cycle"), ~msCycleBox,
+			StaticText().string_("beats/cycle"), ~msCycleBox, ~msAccentBtn,
 			StaticText().string_("range"), ~msLoBox, StaticText().string_("to"), ~msHiBox,
 			StaticText().string_("glide s"), ~msGlideBox,
 			StaticText().string_("level"), ~msAmpBox, ~msVoiceMenu)
