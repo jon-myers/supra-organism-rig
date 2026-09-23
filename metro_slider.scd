@@ -9,7 +9,7 @@ Select all, evaluate.
 */
 (
 ~msInDevice  = nil;   // no input: this patch only makes sound (avoids in/out sample-rate clashes)
-~msOutDevice = "Multi-Output Device";      // nil = system default
+~msOutDevice = "External Headphones";      // nil = system default
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
 ~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
@@ -20,9 +20,20 @@ Select all, evaluate.
 s = Server.default;
 ~msInDevice  !? { s.options.inDevice  = ~msInDevice };
 s.options.numInputBusChannels = 0;
-s.options.inDevice = nil;
+// macOS default input may be an interface that is not running (Waves SoundGrid),
+// and scsynth opens an input even with 0 channels -- so name a safe one
+s.options.inDevice = "MacBook Pro Microphone";
 s.options.sampleRate = nil;
-~msOutDevice !? { s.options.outDevice = ~msOutDevice };
+~msOutDevice !? {
+		// fall back to the system output if the named device is missing or
+		// broken (a Multi-Output whose headphones were unplugged reads as 0 Hz)
+		if (ServerOptions.outDevices.includesEqual(~msOutDevice)) {
+			s.options.outDevice = ~msOutDevice;
+		} {
+			("OUTPUT DEVICE '" ++ ~msOutDevice ++ "' NOT AVAILABLE -- using system default").warn;
+			s.options.outDevice = nil;
+		};
+	};
 
 s.waitForBoot {
 	SynthDef(\msClick, { |bpm = 30, glide = 0.5, amp = 0.5, voice = 0, out = 0,
