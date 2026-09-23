@@ -3,7 +3,8 @@ metro_slider.scd -- one slider, logarithmic tempo, live click.
 Slider left = LO BPM (default 20; starts at 30), right = HI BPM (default 80), equal slider
 distance = equal tempo RATIO (log map), so 30->40 feels like 60->80.
 The tempo glides server-side (glide s), so moves are smooth, never stepped.
-Readout shows the ACTUAL tempo the click is at, once a second (~msReadHz). No animation.
+Readout shows the ACTUAL tempo the click is at (~msReadHz); the target line
+under it repaints at most once a second (~msTargetHz), however fast you slide. No animation.
 Select all, evaluate.
 */
 (
@@ -11,7 +12,8 @@ Select all, evaluate.
 ~msOutDevice = "External Headphones";      // nil = system default
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
-~msReadHz = 1;      // tempo readout updates per second (capped 0.25-4)
+~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
+~msTargetHz = 1;    // 'target' line updates per second while you slide
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
 
@@ -48,7 +50,7 @@ s.waitForBoot {
 	~msSet = { |b|
 		~msBpm = b.clip(1, 400);
 		~msSynth !? { ~msSynth.set(\bpm, ~msBpm, \glide, ~msGlide) };
-		{ ~msTarget.string = "target " ++ ~msBpm.round(0.1) ++ " BPM" }.defer;
+		~msTargetDirty = true;   // painted by the throttled routine below
 	};
 	~msBeats = 0;
 	~msStart = {
@@ -113,7 +115,17 @@ s.waitForBoot {
 			StaticText().string_("glide s"), ~msGlideBox,
 			StaticText().string_("level"), ~msAmpBox, ~msVoiceMenu)
 	);
-	~msWin.onClose = { ~msStop.value; OSCdef(\msTempo).free; OSCdef(\msBeat).free };
+	~msTargetDirty = false;
+	~msTargetRout = Routine {
+		loop {
+			if (~msTargetDirty) {
+				~msTargetDirty = false;
+				~msTarget.string = "target " ++ ~msBpm.round(0.1) ++ " BPM";
+			};
+			(1 / ~msTargetHz.clip(0.25, 4)).wait;
+		};
+	}.play(AppClock);
+	~msWin.onClose = { ~msTargetRout.stop; ~msStop.value; OSCdef(\msTempo).free; OSCdef(\msBeat).free };
 	~msSlider.focus(true);   // arrow keys nudge the slider too
 	~msStart.value;
 	"METRO_SLIDER_READY".postln;
