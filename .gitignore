@@ -1,0 +1,7 @@
+*.wav
+*.aif
+*.aiff
+*.flac
+*.mp3
+sessions/
+.DS_Store

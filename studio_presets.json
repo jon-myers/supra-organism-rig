@@ -1,0 +1,46 @@
+{
+  "presets": [
+    {
+      "name": "breath - harmonium",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording with gentle electronic hiss.",
+      "tar": "TrackType: Instrument, a solo harmonium sustaining a warm reedy drone, hand-pumped free-reed timbre with breath-controlled swells, stereo pair recording in a natural room.",
+      "tarCfg": "5.0"
+    },
+    {
+      "name": "breath - harmonium (clean src, no hiss)",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording, quiet noise floor.",
+      "tar": "TrackType: Instrument, a solo harmonium sustaining a warm reedy drone, hand-pumped free-reed timbre with breath-controlled swells, stereo pair recording in a natural room.",
+      "tarCfg": "5.0"
+    },
+    {
+      "name": "breath - harmonium on <note>",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording with gentle electronic hiss.",
+      "tar": "TrackType: Instrument, a solo harmonium sustaining a warm reedy drone on <note>, hand-pumped free-reed timbre with breath-controlled swells, stereo pair recording in a natural room.",
+      "tarCfg": "9.0"
+    },
+    {
+      "name": "sung tone - harmonium on <note>",
+      "src": "A single person singing one sustained open vowel, steady pitch, close-miked, dry studio recording, no background noise.",
+      "tar": "TrackType: Instrument, a solo harmonium sustaining a warm reedy drone on <note>, hand-pumped free-reed timbre with breath-controlled swells, stereo pair recording in a natural room.",
+      "tarCfg": "9.0"
+    },
+    {
+      "name": "breath - aeolian harp on <note>",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording with gentle electronic hiss.",
+      "tar": "TrackType: Instrument, an aeolian harp — wind-blown metal strings on a wooden resonator: harmonics centered on <note>, swelling and fading irregularly, a warm, ringing metallic-string timbre, over a quiet natural background.",
+      "tarCfg": "9.0"
+    },
+    {
+      "name": "breath - ocean waves",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording with gentle electronic hiss.",
+      "tar": "TrackType: Sound Effects, ocean waves rolling onto a sandy shore — broadband surf swelling and receding irregularly, a low rumble beneath bright foam and hiss, long natural decays between sets, wide stereo field recorded outdoors.",
+      "tarCfg": "5.0"
+    },
+    {
+      "name": "breath - babbling brook",
+      "src": "A person breathing deeply and slowly, soft and controlled, close-miked, dry studio recording with gentle electronic hiss.",
+      "tar": "TrackType: Sound Effects, a shallow babbling brook running over stones — a continuous bright trickle of water with irregular gurgles and pops, held at a nearly constant level throughout, close natural recording over a quiet outdoor background.",
+      "tarCfg": "5.0"
+    }
+  ]
+}
