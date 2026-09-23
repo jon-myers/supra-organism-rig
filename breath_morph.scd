@@ -120,14 +120,14 @@ s.waitForBoot {
 		.value_(~bmAmp).fixedWidth_(56)
 		.action_({ |nb| ~bmAmp = nb.value; ~bmSynths.do(_.set(\amp, ~bmAmp)) });
 	// volume: slider in dB (-40 .. +6), linked to the level box
-	~bmVolText = StaticText().string_("").fixedWidth_(70);
+	~bmVolText = StaticText().string_("").fixedWidth_(64).align_(\center);
 	~bmSetAmp = { |a|
 		~bmAmp = a.clip(0, 2);
 		~bmSynths.do(_.set(\amp, ~bmAmp));
 		{ ~bmAmpBox.value = ~bmAmp;
 		   ~bmVolText.string = if (~bmAmp <= 0.01) { "-inf dB" } { ~bmAmp.ampdb.round(0.5).asString ++ " dB" } }.defer;
 	};
-	~bmVolSlider = Slider().orientation_(\horizontal).fixedHeight_(30)
+	~bmVolSlider = Slider().orientation_(\vertical).fixedWidth_(44).minHeight_(160)
 		.value_(\db.asSpec.copy.minval_(-40).maxval_(6).unmap(~bmAmp.ampdb))
 		.action_({ |sl| var db = ControlSpec(-40, 6).map(sl.value);
 			~bmSetAmp.(if (sl.value <= 0.001) { 0 } { db.dbamp }) });
@@ -136,9 +136,8 @@ s.waitForBoot {
 	~bmCompBtn = Button().states_([["level comp off", Color.black, Color.white],
 		["level comp ON", Color.white, Color.blue(0.5)]]).fixedWidth_(120)
 		.action_({ |b| ~bmComp = (b.value == 1); ~bmSet.(~bmN) });
-	~bmWin.layout = VLayout(
+	~bmWin.layout = HLayout([VLayout(
 		~bmCount, ~bmSlider,
-		HLayout(StaticText().string_("volume").font_(Font.default.boldVariant), [~bmVolSlider, stretch: 1], ~bmVolText),
 		HLayout(StaticText().string_("1"), nil, StaticText().string_(nv.asString ++ " voices")),
 		StaticText().string_("morph per voice:  bottom = breath,  top = harmonium   ("
 			++ ns ++ " FlowEdit steps)").fixedHeight_(18),
@@ -151,6 +150,9 @@ s.waitForBoot {
 			StaticText().string_("morph glide s"), ~bmGlideBox,
 			StaticText().string_("level"), ~bmAmpBox, ~bmCompBtn, nil,
 			StaticText().string_("loop " ++ meta["loop_s"] ++ " s, all voices in sync"))
+	), stretch: 1],
+		VLayout(StaticText().string_("volume").align_(\center).font_(Font.default.boldVariant),
+			HLayout(nil, ~bmVolSlider, nil).margins_(0), ~bmVolText).spacing_(4)
 	);
 	{ ~bmSetAmp.(~bmAmp) }.defer(0.5);   // after the s.bind voices exist
 	~bmDirty = true;
