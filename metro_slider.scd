@@ -1,6 +1,6 @@
 /*
 metro_slider.scd -- one slider, logarithmic tempo, live click.
-Slider left = LO BPM (default 30), right = HI BPM (default 80), equal slider
+Slider left = LO BPM (default 20; starts at 30), right = HI BPM (default 80), equal slider
 distance = equal tempo RATIO (log map), so 30->40 feels like 60->80.
 The tempo glides server-side (glide s), so moves are smooth, never stepped.
 Readout shows the ACTUAL tempo the click is at, 4x a second. No animation.
@@ -9,7 +9,7 @@ Select all, evaluate.
 (
 ~msInDevice  = "MacBook Pro Microphone";   // nil = system default
 ~msOutDevice = "External Headphones";      // nil = system default
-~msLo = 30; ~msHi = 80; ~msBpm = 30; ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
+~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
 
@@ -80,7 +80,7 @@ s.waitForBoot {
 	~msTarget = StaticText().string_("target 30 BPM").align_(\center)
 		.font_(Font.default.size_(16));
 	~msBeatText = StaticText().string_("beat 0").align_(\center).font_(Font.default.size_(16));
-	~msSlider = Slider().orientation_(\horizontal).fixedHeight_(60).step_(0.0005).value_(0)
+	~msSlider = Slider().orientation_(\horizontal).fixedHeight_(60).step_(0.0005).value_(((30 / ~msLo).log / (~msHi / ~msLo).log).clip(0, 1))
 		.action_({ |sl| ~msSet.(~msToBpm.(sl.value)) });
 	~msLoBox = NumberBox().clipLo_(1).clipHi_(400).decimals_(0).value_(~msLo).fixedWidth_(56)
 		.action_({ |nb| ~msLo = nb.value; ~msSlider.value = ~msToPos.(~msBpm) });
@@ -103,8 +103,8 @@ s.waitForBoot {
 		~msNow, ~msTarget, ~msBeatText,
 		~msSlider,
 		HLayout(~msRunBtn,
-			Button().states_([["back to LO", Color.black, Color.white]]).fixedWidth_(90)
-				.action_({ ~msSlider.value = 0; ~msSet.(~msLo) }),
+			Button().states_([["back to 30", Color.black, Color.white]]).fixedWidth_(90)
+				.action_({ ~msSlider.value = ~msToPos.(30); ~msSet.(30) }),
 			nil,
 			StaticText().string_("beats/cycle"), ~msCycleBox,
 			StaticText().string_("range"), ~msLoBox, StaticText().string_("to"), ~msHiBox,
