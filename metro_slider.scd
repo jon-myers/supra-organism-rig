@@ -8,17 +8,20 @@ under it repaints at most once a second (~msTargetHz), however fast you slide. N
 Select all, evaluate.
 */
 (
-~msInDevice  = "MacBook Pro Microphone";   // nil = system default
-~msOutDevice = "External Headphones";      // nil = system default
+~msInDevice  = nil;   // no input: this patch only makes sound (avoids in/out sample-rate clashes)
+~msOutDevice = "Multi-Output Device";      // nil = system default
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
 ~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
-~msTargetHz = 1;    // 'target' line updates per second while you slide
+~msTargetHz = 4;    // 'target' line updates per second while you slide
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
 
 s = Server.default;
 ~msInDevice  !? { s.options.inDevice  = ~msInDevice };
+s.options.numInputBusChannels = 0;
+s.options.inDevice = nil;
+s.options.sampleRate = nil;
 ~msOutDevice !? { s.options.outDevice = ~msOutDevice };
 
 s.waitForBoot {
