@@ -119,11 +119,26 @@ s.waitForBoot {
 	~bmAmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.05).scroll_step_(0.05).decimals_(2)
 		.value_(~bmAmp).fixedWidth_(56)
 		.action_({ |nb| ~bmAmp = nb.value; ~bmSynths.do(_.set(\amp, ~bmAmp)) });
+	// volume: slider in dB (-40 .. +6), linked to the level box
+	~bmVolText = StaticText().string_("").fixedWidth_(70);
+	~bmSetAmp = { |a|
+		~bmAmp = a.clip(0, 2);
+		~bmSynths.do(_.set(\amp, ~bmAmp));
+		{ ~bmAmpBox.value = ~bmAmp;
+		   ~bmVolText.string = if (~bmAmp <= 0.01) { "-inf dB" } { ~bmAmp.ampdb.round(0.5).asString ++ " dB" } }.defer;
+	};
+	~bmVolSlider = Slider().orientation_(\horizontal).fixedHeight_(30)
+		.value_(\db.asSpec.copy.minval_(-40).maxval_(6).unmap(~bmAmp.ampdb))
+		.action_({ |sl| var db = ControlSpec(-40, 6).map(sl.value);
+			~bmSetAmp.(if (sl.value <= 0.001) { 0 } { db.dbamp }) });
+	~bmAmpBox.action_({ |nb| ~bmSetAmp.(nb.value);
+		~bmVolSlider.value = ControlSpec(-40, 6).unmap(nb.value.max(0.0001).ampdb) });
 	~bmCompBtn = Button().states_([["level comp off", Color.black, Color.white],
 		["level comp ON", Color.white, Color.blue(0.5)]]).fixedWidth_(120)
 		.action_({ |b| ~bmComp = (b.value == 1); ~bmSet.(~bmN) });
 	~bmWin.layout = VLayout(
 		~bmCount, ~bmSlider,
+		HLayout(StaticText().string_("volume").font_(Font.default.boldVariant), [~bmVolSlider, stretch: 1], ~bmVolText),
 		HLayout(StaticText().string_("1"), nil, StaticText().string_(nv.asString ++ " voices")),
 		StaticText().string_("morph per voice:  bottom = breath,  top = harmonium   ("
 			++ ns ++ " FlowEdit steps)").fixedHeight_(18),
@@ -137,6 +152,7 @@ s.waitForBoot {
 			StaticText().string_("level"), ~bmAmpBox, ~bmCompBtn, nil,
 			StaticText().string_("loop " ++ meta["loop_s"] ++ " s, all voices in sync"))
 	);
+	{ ~bmSetAmp.(~bmAmp) }.defer(0.5);   // after the s.bind voices exist
 	~bmDirty = true;
 	~bmRout = Routine { loop {
 		if (~bmDirty) {

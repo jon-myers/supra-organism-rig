@@ -89,18 +89,34 @@ s.waitForBoot {
 	~bcAmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.05).scroll_step_(0.05).decimals_(2)
 		.value_(~bcAmp).fixedWidth_(56)
 		.action_({ |nb| ~bcAmp = nb.value; ~bcSynths.do(_.set(\amp, ~bcAmp)) });
+	// volume: slider in dB (-40 .. +6), linked to the level box
+	~bcVolText = StaticText().string_("").fixedWidth_(70);
+	~bcSetAmp = { |a|
+		~bcAmp = a.clip(0, 2);
+		~bcSynths.do(_.set(\amp, ~bcAmp));
+		{ ~bcAmpBox.value = ~bcAmp;
+		   ~bcVolText.string = if (~bcAmp <= 0.01) { "-inf dB" } { ~bcAmp.ampdb.round(0.5).asString ++ " dB" } }.defer;
+	};
+	~bcVolSlider = Slider().orientation_(\horizontal).fixedHeight_(30)
+		.value_(\db.asSpec.copy.minval_(-40).maxval_(6).unmap(~bcAmp.ampdb))
+		.action_({ |sl| var db = ControlSpec(-40, 6).map(sl.value);
+			~bcSetAmp.(if (sl.value <= 0.001) { 0 } { db.dbamp }) });
+	~bcAmpBox.action_({ |nb| ~bcSetAmp.(nb.value);
+		~bcVolSlider.value = ControlSpec(-40, 6).unmap(nb.value.max(0.0001).ampdb) });
 	~bcCompBtn = Button().states_([["level comp off", Color.black, Color.white],
 		["level comp ON", Color.white, Color.blue(0.5)]]).fixedWidth_(120)
 		.value_(~bcComp.asInteger)
 		.action_({ |b| ~bcComp = (b.value == 1); ~bcSet.(~bcN) });
 	~bcWin.layout = VLayout(
 		~bcCount, ~bcWho, ~bcSlider,
+		HLayout(StaticText().string_("volume").font_(Font.default.boldVariant), [~bcVolSlider, stretch: 1], ~bcVolText),
 		HLayout(StaticText().string_("1"), nil, StaticText().string_(nv.asString)),
 		HLayout(StaticText().string_("fade s"), ~bcFadeBox,
 			StaticText().string_("level"), ~bcAmpBox, ~bcCompBtn, nil,
 			StaticText().string_("loop " ++ ~bcBufs[0].duration.round(1) ++ " s, all voices in sync"))
 	);
 	// readout repaints at most 4x a second, only when the count changed
+	{ ~bcSetAmp.(~bcAmp) }.defer(0.5);   // after the s.bind voices exist
 	~bcDirty = true;
 	~bcRout = Routine { loop {
 		if (~bcDirty) {
