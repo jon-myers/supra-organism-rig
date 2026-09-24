@@ -123,3 +123,26 @@ Notes: `.../worktrees/latentft/LATENTFT.md`. The 95-render knob grid is ready bu
 
 Standing issues from the project brief: `/data/scratch/jonmyers` is over quota (use
 `/data/scratch-fast/jonmyers`); lab-journal `song-deconstruct` inbox notes to promote.
+
+## 2026-09-23 evening -- standalone patches (laptop session)
+
+`set.scd` is now the entry point: it opens `metro_slider.scd` + `breath_swarm.scd` on one server.
+
+- `metro_slider.scd` -- one log slider 20-80 BPM (starts 30), glide, beats/cycle (default 10) with
+  a downbeat-accent toggle, big 4 Hz tempo readout.
+- `breath_chorus.scd` -- 1-20 looping breath-collage voices (`render_breath_voices.py`, no GPU).
+- `breath_morph.scd` -- same, each voice morphable breath -> harmonium (`breath_morph.py`, v1 LoRA
+  on 7893, unpitched).
+- `breath_pitched.scd` -- 20 voices, each morphing to its own harmonium pitch: C Eb F Bb (the
+  wall-of-sound dyads' pitch classes, measured) over octaves 2-5 (`breath_pitched.py`). Uses the
+  **harmonium-v2 spn_hz LoRA on 7894** (needs `ssh -O forward -L 7894:127.0.0.1:7894 mobile01`).
+  The v1 LoRA put a strong C5 under every named note (65-87 % of the energy); those renders are
+  kept in `breath_pitched_work_v1_c5drone/`. Voices 19-20 not rendered yet (tunnel dropped).
+- `breath_swarm.scd` -- **live collage, 1-216 voices (6^3)** from the same renders held once
+  (`prepare_swarm.py`, 838 MB): each voice plays breath segments of render v mod 18 in its own
+  endlessly reshuffled order, so there are no loops to realign. Morph = ALL + pitch-class offset +
+  octave offset. Server-side modulation input per voice (`modbus`/`modamt`, `~bsSetMod`) and OSC
+  `/swarm/*` for the force-sensor layer (session so-force). Measured: 216 voices ~20 % avg CPU.
+
+Audio notes: patches fall back to the system output if the named device is missing, and pin the
+input to the MacBook mic (the default input, Waves SoundGrid, crashes boot when not running).
