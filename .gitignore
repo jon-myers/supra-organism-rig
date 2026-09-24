@@ -8,3 +8,8 @@ sessions/
 breath_voices/
 breath_morph_work/
 breath_morph_voices/
+breath_pitched_work/
+breath_pitched_voices/
+breath_pitched_voices_shifted/
+prompt_test/
+breath_pitched_work_v1_c5drone/
