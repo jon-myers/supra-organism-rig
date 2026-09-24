@@ -18,3 +18,4 @@ breath36_work/
 breath36_voices/
 experiments/lfe_steps/renders/
 experiments/lfe_steps/render.log
+__pycache__/
