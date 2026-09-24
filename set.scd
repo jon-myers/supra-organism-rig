@@ -1,9 +1,9 @@
-// set.scd -- open the metronome slider and the breath swarm (live collage,
-// 1-216 voices) together, on one server. Other patches can be opened alongside:
-// breath_pitched.scd (20 baked pitched voices), breath_morph.scd, breath_chorus.scd.
+// set.scd -- open the metronome slider and the 36 individual breaths together,
+// on one server. Optional alongside: force_layer.scd (sensor modulation, after
+// breath36), breath_swarm.scd, breath_pitched.scd, breath_morph.scd, breath_chorus.scd.
 (
 var here = PathName(thisProcess.nowExecutingPath).pathOnly;
-Server.default.options.maxNodes = 8192;   // the swarm runs hundreds of grains
+Server.default.options.maxNodes = 8192;
 thisProcess.interpreter.executeFile(here +/+ "metro_slider.scd");
-thisProcess.interpreter.executeFile(here +/+ "breath_swarm.scd");
+thisProcess.interpreter.executeFile(here +/+ "breath36.scd");
 )

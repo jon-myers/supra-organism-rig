@@ -154,7 +154,7 @@ def cmd_assemble(a):
             wavfile.write(os.path.join(OUT, f), sr, (vs[k] * gains[k] * G).astype(np.float32)); fl.append(f)
         meta.append({"voice": x["voice"], "performer": x["performer"], "take": x["take"],
                      "note": x["note"], "seconds": round(len(vs[0]) / sr, 3), "files": fl})
-    json.dump({"slots": ns, "voices": meta}, open(os.path.join(OUT, "voices.json"), "w"), indent=1)
+    json.dump({"slots": ["source"] + [f"step{k}" for k in range(1, ns)], "voices": meta}, open(os.path.join(OUT, "voices.json"), "w"), indent=1)
     print(f"ASSEMBLE_DONE: {len(meta)} voices x {ns} steps -> {OUT}")
 
 
