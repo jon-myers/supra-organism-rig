@@ -292,6 +292,7 @@ s.waitForBoot {
 	{ ~b36SetAmp.(~b36Amp) }.defer(0.5);
 	~b36Dirty = true;
 	~b36Rout = Routine { loop {
+		if (~b36SliderSync == true) { ~b36SliderSync = false; nv.do { |i| ~b36VSliders[i].value = ~b36Morph[i] } };
 		if (~b36Dirty) {
 			~b36Dirty = false;
 			~b36Count.string = ~b36N.asString ++ if (~b36N == 1) { " voice" } { " voices" };
@@ -336,7 +337,8 @@ s.waitForBoot {
 	};
 	~mkCC = (sliders: (0..7), knobs: (16..23), sBtn: (32..39), mBtn: (48..55), rBtn: (64..71), play: 41, stop: 42, cycle: 46);
 	~mkGroupMorph = { |g| var vs = ~mkGroupVoices[g]; if (vs.isEmpty) { 0 } { vs.collect { |i| ~b36Morph[i] }.mean } };
-	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v); ~b36VSliders[i].value = v };
+	// sound follows every fader message; the on-screen sliders catch up in the 4-per-second GUI tick (~b36Rout)
+	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v) }; ~b36SliderSync = true;
 		if (~mkLink) { ~mkRelease.((0..7).reject { |c| c == g }) } };   // LINKED: only the fader being moved drives
 	~mkKnob = { |k, v|
 		var lmax = levelNames.size - 1;
