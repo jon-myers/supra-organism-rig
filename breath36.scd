@@ -234,10 +234,10 @@ s.waitForBoot {
 	~b36VText = Array.newClear(nv); ~spLvlText = Array.newClear(nv);
 	~b36VSliders = nv.collect { |i|
 		Slider().orientation_(\vertical).fixedWidth_(34).minHeight_(130).step_(0.005).value_(0)
-			.action_({ |sl| ~b36SetMorph.(i, sl.value) });
+			.action_({ |sl| ~b36SetMorph.(i, sl.value); ~mkRelease !? { ~mkRelease.([~mkGroup[i]]) } });   // mouse moved it: its fader must catch up again
 	};
 	~b36AllSlider = Slider().orientation_(\vertical).fixedWidth_(40).minHeight_(130).step_(0.005)
-		.value_(0).action_({ |sl| nv.do { |i| ~b36SetMorph.(i, sl.value); ~b36VSliders[i].value = sl.value } });
+		.value_(0).action_({ |sl| nv.do { |i| ~b36SetMorph.(i, sl.value); ~b36VSliders[i].value = sl.value }; ~mkRelease !? { ~mkRelease.((0..7)) } });
 	~b36Cols = nv.collect { |i|
 		~b36VText[i] = StaticText().string_("0").align_(\center).fixedWidth_(46);
 		~spLvlText[i] = StaticText().string_("1x").align_(\center).fixedWidth_(46).font_(Font.default.size_(10));
@@ -311,7 +311,21 @@ s.waitForBoot {
 	~mkGroupVoices = ~mkBlockSizes.collect { |sz, g| var start = ~mkBlockSizes.keep(g).sum; (start..(start + sz - 1)).select { |i| i < nv } };
 	~mkGroup = nv.collect { |i| ~mkGroupVoices.detectIndex { |vs| vs.includes(i) } ? 0 };
 	~mkLink = false; ~mkLastN = nv;
-	~mkLast = IdentityDictionary.new; ~mkCaught = IdentityDictionary.new;
+	~mkLast = IdentityDictionary.new; ~mkCaught = IdentityDictionary.new; ~mkHeld = IdentityDictionary.new;
+	// a fader whose voices were changed by something else (mouse, or another fader while LINKED) lets go,
+	// and only acts again once it catches up with the new value. Without this, a resting fader that had
+	// been caught earlier yanked the voices back on every twitch (the 2026-09-28 "spazzing" faders).
+	~mkRelease = { |ccs| ccs.do { |c| ~mkCaught[c] = false; ~mkLast[c] = nil } };
+	// jitter filter: a fader keeps moving freely in the direction it is going, but turning back needs
+	// 4 steps (of 127). Measured 2026-09-28: fader 7 at rest sends 0,2,1,0,2,... ~4 times a second
+	// (dirty/worn); that is all reversals, so it never gets through.
+	~mkDir = IdentityDictionary.new;
+	~mkSteady = { |cc, val| var held = ~mkHeld[cc], d, ok;
+		if (held.isNil) { ~mkHeld[cc] = val; true } {
+			d = val - held;
+			ok = (d != 0) and: { (d.sign == (~mkDir[cc] ? 0)) or: { d.abs >= 4 } };
+			if (ok) { ~mkHeld[cc] = val; ~mkDir[cc] = d.sign };
+			ok } };
 	// soft takeover: a control only acts once it has passed through (or come within 3 % of) the current value
 	~mkPick = { |cc, v, current|
 		var last = ~mkLast[cc], caught = ~mkCaught[cc] ? false;
@@ -322,7 +336,8 @@ s.waitForBoot {
 	};
 	~mkCC = (sliders: (0..7), knobs: (16..23), sBtn: (32..39), mBtn: (48..55), rBtn: (64..71), play: 41, stop: 42, cycle: 46);
 	~mkGroupMorph = { |g| var vs = ~mkGroupVoices[g]; if (vs.isEmpty) { 0 } { vs.collect { |i| ~b36Morph[i] }.mean } };
-	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v); ~b36VSliders[i].value = v } };
+	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v); ~b36VSliders[i].value = v };
+		if (~mkLink) { ~mkRelease.((0..7).reject { |c| c == g }) } };   // LINKED: only the fader being moved drives
 	~mkKnob = { |k, v|
 		var lmax = levelNames.size - 1;
 		switch (k,
@@ -358,7 +373,7 @@ s.waitForBoot {
 			{
 				var g = ~mkCC.sliders.indexOf(cc), k = ~mkCC.knobs.indexOf(cc);
 				if ((cc == 58 or: { cc == 59 }) and: { val > 0 }) { ~mkPassOwner.(if (cc == 59) { 1 } { -1 }) };
-				if (~mkOwner == \breath36) {
+				if (~mkOwner == \breath36 and: { (g.isNil and: { k.isNil }) or: { ~mkSteady.(cc, val) } }) {
 					g !? { if (~mkPick.(cc, v, ~mkGroupMorph.(g))) { ~mkSetGroup.(g, v) } };
 					k !? { ~mkKnob.(k, v) };
 					if (g.isNil and: { k.isNil } and: { val > 0 } and: { cc != 58 } and: { cc != 59 }) { ~mkButton.(cc) };
