@@ -12,6 +12,8 @@ nothing to hear and nothing is ever loaded or started during playback.
   variant  _lr / _mid (reloads the set)          master   output level (limiter after it)
   PLAY/STOP, position slider = seek; the playhead loops at the end of the render.
 Sets: every folder under song_deconstruct/sweeps/<set>/<grain>/ that holds planes (plane_NN_*.flac/wav).
+ORIGINAL row at the top: plain playback of the unprocessed Phantom Pain (song_deconstruct/in/phantom_pain.wav),
+independent of the sweep -- own PLAY/STOP, position (seek), level; plays through the same limiter.
 nanoKONTROL2 when ~mkOwner == \sweep: slider 1 centre, knob 5 master, PLAY/STOP, CYCLE variant.
 Select all, evaluate. Re-evaluating tears the previous instance down first.
 */
@@ -21,6 +23,9 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 ~swOutBus = ~swOutBus ? 0;
 ~swP = (centre: 0, master: 0.5, variant: "_lr");
 ~swMaxPlanes = 128;
+~swOrigPaths = [here +/+ ".." +/+ "song_deconstruct" +/+ "in" +/+ "phantom_pain.wav",
+	here +/+ ".." +/+ "concatenator-corpus" +/+ "targets" +/+ "Bill Converse 2 - Phantom Pain.wav"];
+~swOrigAmp = 0.8;
 s = Server.default;
 s.options.numBuffers = s.options.numBuffers.max(4096);
 s.waitForBoot {
@@ -32,7 +37,16 @@ s.waitForBoot {
 	~swPlanes !? { ~swPlanes.do { |p| p !? { p.tryPerform(\free); p.tryPerform(\at, \buf) !? { |b| b.free } } } };
 	~swBufs !? { ~swBufs.do(_.free) }; ~swBufs = [];
 	MIDIdef(\swcc).free; MIDIdef(\swnote).free; OSCdef(\swPos).free;
+	~swOrigSynth !? { ~swOrigSynth.free }; ~swOrigSynth = nil; ~swOrigBuf !? { ~swOrigBuf.free }; ~swOrigBuf = nil;
+	OSCdef(\swOrigPos).free; OSCdef(\swOrigEnd).free;
 
+	SynthDef(\swOrig, { |buf = 0, amp = 0.8, start = 0, gate = 1, out = 0|
+		var env = EnvGen.kr(Env.asr(0.01, 1, 0.08), gate, doneAction: 2);
+		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0, doneAction: 2);
+		SendReply.kr(Impulse.kr(4), '/swOrigPos', (start / BufSampleRate.kr(buf)) + Sweep.kr(0, 1));
+		SendReply.kr(Done.kr(sig), '/swOrigEnd', 1);
+		Out.ar(out, sig * env * amp.lag(0.05));
+	}).add;
 	SynthDef(\swLadder, { |centre = 0, amp = 0.5, n = 1, frames = 1, rate = 1, t_reset = 0, resetPos = 0, run = 1, out = 0|
 		var bufs = \bufs.kr(0 ! ~swMaxPlanes);
 		var c = Lag.kr(centre, 0.02).clip(0, n - 1);   // just enough to smooth mouse steps
@@ -46,6 +60,21 @@ s.waitForBoot {
 	SynthDef(\swLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add;
 	s.sync;
 	~swLimiter = Synth.tail(s, \swLimit, [\out, ~swOutBus]);
+
+	// ---- the original track (plain playback) ----
+	~swOrigPath = ~swOrigPaths.detect { |f| File.exists(f) };
+	~swOrigBuf = ~swOrigPath !? { |f| Buffer.read(s, f) };
+	s.sync;
+	~swOrigDur = ~swOrigBuf !? { |b| b.numFrames / b.sampleRate } ? 0;
+	~swOrigPos = 0; ~swOrigPlaying = false;
+	~swOrigStart = { ~swOrigBuf !? { |b|
+		~swOrigSynth !? { ~swOrigSynth.set(\gate, 0) };
+		if (~swOrigPos >= (~swOrigDur - 0.5)) { ~swOrigPos = 0 };
+		~swOrigSynth = Synth.before(~swLimiter, \swOrig, [\buf, b, \amp, ~swOrigAmp, \start, (~swOrigPos * b.sampleRate).asInteger, \out, ~swOutBus]);
+		~swOrigPlaying = true; { ~swOrigBtn.value = 1 }.defer } };
+	~swOrigStop = { ~swOrigSynth !? { ~swOrigSynth.set(\gate, 0) }; ~swOrigSynth = nil; ~swOrigPlaying = false; { ~swOrigBtn.value = 0 }.defer };
+	OSCdef(\swOrigPos, { |m| if (~swOrigSynth.notNil and: { m[1] == ~swOrigSynth.nodeID }) { ~swOrigPos = m[3] } }, '/swOrigPos');
+	OSCdef(\swOrigEnd, { |m| if (~swOrigSynth.notNil and: { m[1] == ~swOrigSynth.nodeID }) { ~swOrigSynth = nil; ~swOrigPos = 0; ~swOrigPlaying = false; { ~swOrigBtn.value = 0 }.defer } }, '/swOrigEnd');
 
 	// sets on disk: <root>/<set>/<grain>/ with planes; plus any older layout folders that hold *.flac/*.wav
 	sets = IdentityDictionary.new;
@@ -95,7 +124,7 @@ s.waitForBoot {
 	OSCdef(\swPos, { |m| ~swPos = m[3] / (~swSR ? 44100) }, '/swPos');
 
 	// ---- GUI ----
-	~swWin = if (~stHost.notNil) { ~stHost.(\sweep) } { Window("phantom pain sweep", Rect(700, 560, 760, 300)).front };   // in a tab of show_tabs.scd, or its own window
+	~swWin = if (~stHost.notNil) { ~stHost.(\sweep) } { Window("phantom pain sweep", Rect(700, 520, 760, 340)).front };   // in a tab of show_tabs.scd, or its own window
 	// nanoKONTROL2 follows the FRONT window: bringing this window forward makes it the owner
 	~swWin.tryPerform(\toFrontAction_, { ~mkOwners = (~mkOwners ? []).add(\sweep).asSet.asArray; ~mkOwner = \sweep;
 		{ ~swMidiText !? { ~swMidiText.string = "nanoKONTROL2: this window (front)" } }.defer });
@@ -122,7 +151,16 @@ s.waitForBoot {
 	~swPosText = StaticText().string_("0:00").fixedWidth_(60);
 	~swInfo = StaticText().string_("").fixedHeight_(18);
 	~swMidiText = StaticText().string_("").fixedHeight_(16);
+	~swOrigBtn = Button().states_([["PLAY original"], ["STOP original", Color.white, Color.green(0.5)]]).fixedWidth_(110)
+		.enabled_(~swOrigBuf.notNil).action_({ |b| if (b.value == 1) { ~swOrigStart.value } { ~swOrigStop.value } });
+	~swOrigPosSl = Slider().orientation_(\horizontal).fixedHeight_(22).value_(0)
+		.action_({ |sl| ~swOrigPos = sl.value * ~swOrigDur; if (~swOrigPlaying) { ~swOrigStart.value } });
+	~swOrigPosText = StaticText().string_(if (~swOrigBuf.notNil) { "0:00" } { "no file" }).fixedWidth_(60);
+	~swOrigAmpSl = Slider().orientation_(\horizontal).fixedHeight_(22).fixedWidth_(110).value_(~swOrigAmp)
+		.action_({ |sl| ~swOrigAmp = sl.value; ~swOrigSynth !? { ~swOrigSynth.set(\amp, ~swOrigAmp) } });
 	~swWin.layout = VLayout(
+		HLayout(~swOrigBtn, ~swOrigPosSl, ~swOrigPosText, StaticText().string_("level"), ~swOrigAmpSl),
+		View().fixedHeight_(1).background_(Color.grey(0.6)),
 		HLayout(StaticText().string_("set"), ~swSetMenu, ~swVarBtn, nil), ~swSetText,
 		~swCentreText, ~swCentreSl,
 		HLayout(StaticText().string_("master").fixedWidth_(60), ~swMasterSl),
@@ -138,6 +176,8 @@ s.waitForBoot {
 		if (~swCentreShown != ~swCentreVal) { ~swCentreShown = ~swCentreVal; ~swCentreSl.refresh };
 		if (~swDur.notNil) { var p = ~swPos; ~swPosText.string = (p / 60).floor.asInteger.asString ++ ":" ++ (p % 60).floor.asInteger.asString.padLeft(2, "0");
 			if (~swPlaying and: { ~swTickN % 4 == 0 }) { ~swPosSl.value = p / ~swDur } };   // position bar steps once a second (motion-safe)
+		if (~swOrigBuf.notNil) { var p = ~swOrigPos; ~swOrigPosText.string = (p / 60).floor.asInteger.asString ++ ":" ++ (p % 60).floor.asInteger.asString.padLeft(2, "0");
+			if (~swOrigPlaying and: { ~swTickN % 4 == 0 }) { ~swOrigPosSl.value = p / ~swOrigDur.max(1) } };
 		~swTickN = (~swTickN ? 0) + 1;
 		0.25.wait } }.play(AppClock);
 	["lowpass_full2bar", "highpass_full2bar", "highpass_full", "lowpass_full"].do { |want| var i;
@@ -160,7 +200,7 @@ s.waitForBoot {
 			if (val > 0) { if (cc == 41) { ~swPlay.value }; if (cc == 42) { ~swStop.value }; if (cc == 46) { ~swVarBtn.valueAction = 1 - ~swVarBtn.value } };
 		  } }.defer }).permanent_(true);
 	MIDIdef.noteOn(\swnote, { |vel, note| { if (note == 58 or: { note == 59 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (note == 59) { 1 } { -1 }); ~swMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner } }.defer }).permanent_(true);
-	~swWin.onClose = { ~swRout.stop; ~swSynth !? { ~swSynth.free }; ~swLimiter !? { ~swLimiter.free; ~swLimiter = nil }; ~swBufs.do(_.free); ~swBufs = [];
+	~swWin.onClose = { ~swRout.stop; ~swOrigSynth !? { ~swOrigSynth.free }; ~swOrigSynth = nil; ~swOrigBuf !? { ~swOrigBuf.free }; ~swOrigBuf = nil; OSCdef(\swOrigPos).free; OSCdef(\swOrigEnd).free; ~swSynth !? { ~swSynth.free }; ~swLimiter !? { ~swLimiter.free; ~swLimiter = nil }; ~swBufs.do(_.free); ~swBufs = [];
 		MIDIdef(\swcc).free; MIDIdef(\swnote).free; OSCdef(\swPos).free; ~mkOwners.remove(\sweep); ~mkOwner = ~mkOwners.first };
 	"SWEEP_LIVE_READY".postln;
 };
