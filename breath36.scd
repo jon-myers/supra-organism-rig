@@ -317,16 +317,24 @@ s.waitForBoot {
 	// and only acts again once it catches up with the new value. Without this, a resting fader that had
 	// been caught earlier yanked the voices back on every twitch (the 2026-09-28 "spazzing" faders).
 	~mkRelease = { |ccs| ccs.do { |c| ~mkCaught[c] = false; ~mkLast[c] = nil } };
-	// jitter filter: a fader keeps moving freely in the direction it is going, but turning back needs
-	// 4 steps (of 127). Measured 2026-09-28: fader 7 at rest sends 0,2,1,0,2,... ~4 times a second
-	// (dirty/worn); that is all reversals, so it never gets through.
-	~mkDir = IdentityDictionary.new;
-	~mkSteady = { |cc, val| var held = ~mkHeld[cc], d, ok;
-		if (held.isNil) { ~mkHeld[cc] = val; true } {
+	// jitter filter: a fader keeps moving freely in the direction it is going; turning back needs TWO
+	// messages in a row, both at least 4 steps (of 127) back. Measured 2026-09-28 with nobody touching it:
+	// fader 7 sent 0,2,1,0,2,... ~4/s and fader 8 sent 119,114,117,114,119,... ~100/s. Noise flips
+	// direction on every message, a hand turning back does not, so the noise never gets through.
+	~mkDir = IdentityDictionary.new; ~mkPend = IdentityDictionary.new;
+	~mkSteady = { |cc, val| var held = ~mkHeld[cc], d, ok = false;
+		if (held.isNil) { ~mkHeld[cc] = val; ok = true } {
 			d = val - held;
-			ok = (d != 0) and: { (d.sign == (~mkDir[cc] ? 0)) or: { d.abs >= 4 } };
-			if (ok) { ~mkHeld[cc] = val; ~mkDir[cc] = d.sign };
-			ok } };
+			// any message that is not a >= 4-step turn-back clears the pending turn (repeats included),
+			// so only two such messages IN A ROW turn a fader around
+			case
+				{ d == 0 } { ~mkPend[cc] = nil }
+				{ d.sign == (~mkDir[cc] ? 0) } { ok = true; ~mkPend[cc] = nil }
+				{ d.abs >= 4 and: { ~mkPend[cc] == d.sign } } { ok = true; ~mkPend[cc] = nil }
+				{ d.abs >= 4 } { ~mkPend[cc] = d.sign }
+				{ ~mkPend[cc] = nil };
+			if (ok) { ~mkHeld[cc] = val; ~mkDir[cc] = d.sign } };
+		ok };
 	// soft takeover: a control only acts once it has passed through (or come within 3 % of) the current value
 	~mkPick = { |cc, v, current|
 		var last = ~mkLast[cc], caught = ~mkCaught[cc] ? false;
