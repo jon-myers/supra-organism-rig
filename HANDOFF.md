@@ -385,5 +385,12 @@ Lessons that cost time today (so they are not repeated):
   (`metro.scd`, own server `~msServer`, port 57131) plays to -- instead of the main output. Likely: play it on
   the metro server (load phantom_pain.wav there), driven by the sweep's position/transport, since a server
   can only open one output device.
+- **Metronome to the interface AND the headphones, toggleable** (Jon, 2026-09-29). "Speakers" = the audio
+  interface the main server plays through (Scarlett 2i2 now, probably an RME Fireface from 2026-09-30).
+  Plan (route 1, agreed in principle, not built): `metro_dual.scd` + a launcher copy, metro.scd untouched.
+  Headphone path = the metro server as now, its tick-box mutes/unmutes (no reboot). Interface path = each
+  `/msBeat` the metro server already sends triggers the same click (accent on beat 1) on the MAIN server,
+  with its own tick-box, level, output channel pair (the Fireface has many outputs) and a delay knob so the
+  interface click can be pushed later to meet late (Bluetooth) headphones. Sync is by beat, so no drift.
 - **Paused, uncommitted:** `force_breath.scd` + `show_tabs_force.scd` (force perturbs the 36 breath voices
   around their centres; tested headless, see this session's notes). Commit and try after rehearsal.
