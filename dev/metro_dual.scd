@@ -38,6 +38,10 @@ Select all, evaluate.
 ~mdHpOn = ~mdHpOn ? true;            // headphone (metro server) click on
 ~mdIfOn = ~mdIfOn ? false;           // interface (main server) click off by default
 ~mdIfAmp = ~mdIfAmp ? 0.5; ~mdIfPair = ~mdIfPair ? 0; ~mdIfDelay = ~mdIfDelay ? 0;   // level x, output pair index, delay s
+// IN-EAR TRACKS: audio files in supra-organism/in_ears/ (wav / aif / flac; mono or stereo) played on THIS server,
+// i.e. to the in-ear headphones, with their own volume; independent of the click. Add files, press rescan.
+~mdTrackDir = PathName(thisProcess.nowExecutingPath).pathOnly +/+ ".." +/+ ".." +/+ "in_ears";
+~mdTrackAmp = ~mdTrackAmp ? 0.5; ~mdTrackLoop = ~mdTrackLoop ? false; ~mdTrackIdx = ~mdTrackIdx ? 0;
 // display rate limit (Jon: nothing on screen faster than 4x/s -- vestibular migraine): shared ~uiLater queue
 ~uiPending = ~uiPending ? IdentityDictionary.new;
 ~uiLater = { |key, fn| ~uiPending[key] = fn };
@@ -131,7 +135,18 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		SendReply.ar(trig, '/msBeat', count);
 		Out.ar(out, sig ! 2);
 	}).send(~msServer);
+	// in-ear track player: reads from `start` s, loops or frees itself at the end; position reported 4x/s
+	SynthDef(\mdTrack, { |buf = 0, amp = 0.5, start = 0, loop = 0, gate = 1, out = 0|
+		var frames = BufFrames.kr(buf), ph = (start * BufSampleRate.kr(buf)) + Sweep.ar(0, BufSampleRate.kr(buf));
+		var env = EnvGen.kr(Env.asr(0.01, 1, 0.08), gate, doneAction: 2);
+		var sig = BufRd.ar(2, buf, ph % frames, 1, 4);
+		var ended = A2K.kr(ph >= frames) * (1 - loop);
+		SendReply.kr(Impulse.kr(4), '/mdTrackPos', A2K.kr(ph % frames) / BufSampleRate.kr(buf));
+		SendReply.kr(ended, '/mdTrackEnd', 1); FreeSelf.kr(ended);
+		Out.ar(out, sig * env * amp.lag(0.05));
+	}).send(~msServer);
 	~msServer.sync;
+	~mdTrackSynth = nil; ~mdTrackBuf = nil; ~mdTrackPlaying = false; ~mdTrackPos = 0;   // a (re)boot loses buffers and nodes
 
 	~msAccentRatio = { if (~msAccentOn) { ~msAccent } { 1 } };
 	~msToBpm  = { |v| ~msLo * ((~msHi / ~msLo) ** v.clip(0, 1)) };
@@ -223,6 +238,47 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdIfPairMenu = PopUpMenu().items_(~mdIfPairs.value).value_(~mdIfPair).fixedWidth_(90).action_({ |m| ~mdIfPair = m.value });
 	~mdIfDelayBox = NumberBox().clipLo_(0).clipHi_(500).step_(5).scroll_step_(5).decimals_(0).value_(~mdIfDelay * 1000).fixedWidth_(56)
 		.action_({ |nb| ~mdIfDelay = nb.value / 1000 });
+	// ---- IN-EAR TRACKS ----
+	~mdTrackFiles = { (["wav", "WAV", "aif", "aiff", "flac"].collect { |e| (~mdTrackDir +/+ "*." ++ e).pathMatch }.flatten).asSet.asArray.sort };
+	~mdTrackList = ~mdTrackFiles.();
+	~mdTrackLoad = { |path, then| var nch = SoundFile.openRead(path) !? { |f| var n = f.numChannels; f.close; n } ? 2;
+		~mdTrackBuf !? { ~mdTrackBuf.free }; ~mdTrackBuf = nil; ~mdTrackDur = 0;
+		Buffer.readChannel(~msServer, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }, action: { |b|
+			~mdTrackBuf = b; ~mdTrackDur = b.numFrames / b.sampleRate; ~mdTrackPath = path; then !? { then.value } }) };
+	~mdTrackStart = { var go = {
+			~mdTrackSynth !? { ~mdTrackSynth.set(\gate, 0) };
+			if (~mdTrackPos >= (~mdTrackDur - 0.3)) { ~mdTrackPos = 0 };
+			~mdTrackSynth = Synth(\mdTrack, [\buf, ~mdTrackBuf, \amp, ~mdTrackAmp, \start, ~mdTrackPos, \loop, ~mdTrackLoop.asInteger,
+				\out, ~msOutBus ? 0], ~msServer);
+			~mdTrackPlaying = true; ~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 1 }) };
+		if (~mdTrackList.isEmpty) { "in-ear: no audio files in in_ears/".warn } {
+			if (~mdTrackBuf.notNil and: { ~mdTrackPath == ~mdTrackList[~mdTrackIdx] }) { go.() } { ~mdTrackLoad.(~mdTrackList[~mdTrackIdx], go) } } };
+	~mdTrackStop = { ~mdTrackSynth !? { ~mdTrackSynth.set(\gate, 0) }; ~mdTrackSynth = nil; ~mdTrackPlaying = false;
+		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) };
+	OSCdef(\mdTrackPos, { |m| if (~mdTrackSynth.notNil and: { m[1] == ~mdTrackSynth.nodeID }) { ~mdTrackPos = m[3] } }, '/mdTrackPos', ~msServer.addr);
+	OSCdef(\mdTrackEnd, { |m| if (~mdTrackSynth.notNil and: { m[1] == ~mdTrackSynth.nodeID }) { ~mdTrackSynth = nil; ~mdTrackPlaying = false; ~mdTrackPos = 0;
+		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) } }, '/mdTrackEnd', ~msServer.addr);
+	~mdTrackMenu = PopUpMenu().items_(if (~mdTrackList.isEmpty) { ["(no files in in_ears/)"] } { ~mdTrackList.collect { |p| PathName(p).fileNameWithoutExtension } })
+		.value_(~mdTrackIdx.clip(0, (~mdTrackList.size - 1).max(0))).minWidth_(300)
+		.action_({ |m| ~mdTrackIdx = m.value; ~mdTrackStop.(); ~mdTrackPos = 0 });
+	~mdTrackRescan = Button().states_([["rescan"]]).fixedWidth_(70).action_({ ~mdTrackList = ~mdTrackFiles.();
+		~mdTrackMenu.items = if (~mdTrackList.isEmpty) { ["(no files in in_ears/)"] } { ~mdTrackList.collect { |p| PathName(p).fileNameWithoutExtension } } });
+	~mdTrackBtn = Button().states_([["▶ play track", Color.black, Color.white], ["■ stop track", Color.white, Color.green(0.45)]]).fixedWidth_(110)
+		.action_({ |b| if (b.value == 1) { ~mdTrackStart.() } { ~mdTrackStop.() } });
+	~mdTrackPosSl = Slider().orientation_(\horizontal).fixedHeight_(24).action_({ |sl|
+		~mdTrackPos = sl.value * (~mdTrackDur ? 0); if (~mdTrackPlaying) { ~mdTrackStart.() } });
+	~mdTrackTime = StaticText().string_("0:00").fixedWidth_(90);
+	~mdTrackLoopBox = CheckBox().string_("loop").value_(~mdTrackLoop).action_({ |c| ~mdTrackLoop = c.value; ~mdTrackSynth !? { ~mdTrackSynth.set(\loop, c.value.asInteger) } });
+	~mdTrackVol = Slider().orientation_(\horizontal).fixedHeight_(34).value_(~mdToPos.(~mdTrackAmp))
+		.action_({ |sl| ~mdTrackAmp = ~mdToAmp.(sl.value); ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp) };
+			~uiLater.(\mdTrackDb, { ~mdTrackDbText.string = ~mdDbStr.(~mdTrackAmp) }) });
+	~mdTrackDbText = StaticText().string_(~mdDbStr.(~mdTrackAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
+	~mdTrackRout !? { ~mdTrackRout.stop };
+	~mdTrackRout = Routine { var n = 0; loop {   // 4 Hz text, position bar once a second
+		var p = ~mdTrackPos ? 0, fmt = { |t| (t / 60).floor.asInteger.asString ++ ":" ++ (t % 60).floor.asInteger.asString.padLeft(2, "0") };
+		~mdTrackTime.string = fmt.(p) ++ " / " ++ fmt.(~mdTrackDur ? 0);
+		if (~mdTrackPlaying and: { n % 4 == 0 }) { ~mdTrackPosSl.value = p / (~mdTrackDur ? 1).max(1) };
+		n = n + 1; 0.25.wait } }.play(AppClock);
 	~msWin.layout = VLayout(
 		HLayout(StaticText().string_("output"), ~msDevMenu, ~msRescanBtn, nil), ~msDevText,
 		HLayout(~mdHpBox, StaticText().string_("VOLUME").font_(Font.default.boldVariant), ~mdHpVol, ~mdHpDbText),
@@ -237,7 +293,10 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 			StaticText().string_("beats/cycle"), ~msCycleBox, ~msAccentBtn,
 			StaticText().string_("range"), ~msLoBox, StaticText().string_("to"), ~msHiBox,
 			StaticText().string_("glide s"), ~msGlideBox,
-			StaticText().string_("level"), ~msAmpBox, ~msVoiceMenu)
+			StaticText().string_("level"), ~msAmpBox, ~msVoiceMenu),
+		View().fixedHeight_(1).background_(Color.grey(0.6)),
+		HLayout(StaticText().string_("IN-EAR TRACK").font_(Font.default.boldVariant), ~mdTrackMenu, ~mdTrackRescan, ~mdTrackBtn, ~mdTrackLoopBox, nil),
+		HLayout(~mdTrackPosSl, ~mdTrackTime, StaticText().string_("VOLUME").font_(Font.default.boldVariant), ~mdTrackVol, ~mdTrackDbText)
 	);
 	~msTargetDirty = false;
 	~msTargetRout = Routine {
@@ -249,7 +308,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 			(1 / ~msTargetHz.clip(0.25, 4)).wait;
 		};
 	}.play(AppClock);
-	~msWin.onClose = { ~msWantRunning = false; ~msTargetRout.stop; ~msStop.value; OSCdef(\msTempo).free; OSCdef(\msBeat).free; OSCdef(\mdIfBeat).free };
+	~msWin.onClose = { ~msWantRunning = false; ~msTargetRout.stop; ~msStop.value; ~mdTrackStop.(); ~mdTrackRout !? { ~mdTrackRout.stop }; OSCdef(\mdTrackPos).free; OSCdef(\mdTrackEnd).free; OSCdef(\msTempo).free; OSCdef(\msBeat).free; OSCdef(\mdIfBeat).free };
 	~msSlider.focus(true);   // arrow keys nudge the slider too
 	if (~msResume == true) { ~msStart.value };   // stopped by default; only resumes after a device switch / reconnect
 	~msResume = false;

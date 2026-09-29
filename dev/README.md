@@ -49,3 +49,10 @@ boot so the metronome's output-pair menu offers them.
 When a variant has been played for real: copy it over the stable file in `rig/` (for sweep_sync, fix its
 two-levels-up paths back to one level: `here +/+ ".." +/+ "song_deconstruct"`), point `show_tabs.scd` / `show.scd` at it,
 run the headless tests in HANDOFF.md, commit, push. Do it between rehearsals, not during.
+
+## In-ear tracks (metro_dual.scd, added 2026-09-29)
+The METRONOME tab has an IN-EAR TRACK row: a menu of the audio files in `supra-organism/in_ears/` (wav / aif /
+flac, mono or stereo), play/stop, position (seek), loop, and its own dB volume. It plays on the metronome's
+server, i.e. to the in-ear headphones device, independent of the click. Add a file to `in_ears/` and press
+rescan. Present: Phantom Pain (a link to concatenator-corpus/targets/), Old Town Road (yt-dlp, 48 kHz).
+Tested headless: play, -20 dB volume (-40 -> -59 dB), seek, stops itself at the end, loop wraps, stop = silent.
