@@ -209,6 +209,14 @@ s.waitForBoot {
 
 	// ---------------- GUI ----------------
 	~b36Win !? { ~b36Win.onClose = nil; if (~b36Win.isClosed.not) { ~b36Win.close } };
+	// ---- display rate limit (Jon: nothing on screen may change faster than 4 times a second -- vestibular
+	// migraine). Sound changes at once; a control moved by the nanoKONTROL2 (or by another control) is
+	// redrawn by ONE shared routine every 0.25 s: ~uiLater.(key, { widget.value = x }) -- the last one wins.
+	~uiPending = ~uiPending ? IdentityDictionary.new;
+	~uiLater = { |key, fn| ~uiPending[key] = fn };
+	if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
+		~uiRout = Routine { loop { var p = ~uiPending; ~uiPending = IdentityDictionary.new;
+			p.do { |fn| try { fn.value } }; 0.25.wait } }.play(AppClock) };
 	~b36Win = if (~stHost.notNil) { ~stHost.(\breath36) } { Window("36 breaths -> pitched harmonium  |  speed  |  gap  |  nanoKONTROL2", Rect(60, 40, 1120, 1000)).front };   // in a tab of show_tabs.scd, or its own window
 	// nanoKONTROL2 follows the FRONT window: bringing this window forward makes it the owner
 	~b36Win.tryPerform(\toFrontAction_, { ~mkOwners = (~mkOwners ? []).add(\breath36).asSet.asArray; ~mkOwner = \breath36;
@@ -219,14 +227,14 @@ s.waitForBoot {
 	~spText = StaticText().string_("speed 1x").align_(\center).font_(Font.default.size_(26).boldVariant);
 	~spSlider = Slider().orientation_(\horizontal).fixedHeight_(32).step_(0.01).value_(0)
 		.action_({ |sl| var x = sl.value * (levelNames.size - 1); ~spSetAll.(x);
-			~spText.string = "speed " ++ levelNames[x.round.asInteger].asString ++ "x   (" ++ x.round(0.01).asString ++ ")" });
+			~uiLater.(~spText, { ~spText.string = "speed " ++ levelNames[x.round.asInteger].asString ++ "x   (" ++ x.round(0.01).asString ++ ")" }) });
 	~spSpread = Slider().orientation_(\horizontal).fixedHeight_(20).value_(~spP.spread / 1.5)
 		.action_({ |sl| ~spRollOffsets.(sl.value * 1.5) });
 	~spRollBtn = Button().states_([["re-roll offsets"]]).fixedWidth_(110)
 		.action_({ ~spRollOffsets.(~spP.spread, Date.getDate.rawSeconds.asInteger) });
 	~gpText = StaticText().string_("gap 0.0 s").align_(\center).font_(Font.default.size_(26).boldVariant);
 	~gpSlider = Slider().orientation_(\horizontal).fixedHeight_(32).step_(0.005).value_(0)
-		.action_({ |sl| ~gpSet.(sl.value.squared * 12); ~gpText.string = "gap " ++ ~gpP[\mean].round(0.1).asString ++ " s" });
+		.action_({ |sl| ~gpSet.(sl.value.squared * 12); ~uiLater.(~gpText, { ~gpText.string = "gap " ++ ~gpP[\mean].round(0.1).asString ++ " s" }) });
 	~gpNcvi = PopUpMenu().items_(gapLevels.collect { |l| "gap nCVI " ++ l.round.asInteger.asString }).value_(~gpP.ncviIdx)
 		.action_({ |pm| ~gpP.ncviIdx = pm.value });
 	~gpFadeBox = NumberBox().clipLo_(5).clipHi_(500).step_(5).scroll_step_(5).decimals_(0).value_(~gpP.fade * 1000).fixedWidth_(56)
@@ -237,7 +245,7 @@ s.waitForBoot {
 			.action_({ |sl| ~b36SetMorph.(i, sl.value); ~mkRelease !? { ~mkRelease.([~mkGroup[i]]) } });   // mouse moved it: its fader must catch up again
 	};
 	~b36AllSlider = Slider().orientation_(\vertical).fixedWidth_(40).minHeight_(130).step_(0.005)
-		.value_(0).action_({ |sl| nv.do { |i| ~b36SetMorph.(i, sl.value); ~b36VSliders[i].value = sl.value }; ~mkRelease !? { ~mkRelease.((0..7)) } });
+		.value_(0).action_({ |sl| nv.do { |i| ~b36SetMorph.(i, sl.value) }; ~b36SliderSync = true; ~mkRelease !? { ~mkRelease.((0..7)) } });
 	~b36Cols = nv.collect { |i|
 		~b36VText[i] = StaticText().string_("0").align_(\center).fixedWidth_(46);
 		~spLvlText[i] = StaticText().string_("1x").align_(\center).fixedWidth_(46).font_(Font.default.size_(10));
@@ -255,8 +263,8 @@ s.waitForBoot {
 	~b36VolText = StaticText().string_("").fixedWidth_(64).align_(\center);
 	~b36SetAmp = { |a|
 		~b36Amp = a.clip(0, 2);
-		{ ~b36AmpBox.value = ~b36Amp;
-		   ~b36VolText.string = if (~b36Amp <= 0.01) { "-inf dB" } { ~b36Amp.ampdb.round(0.5).asString ++ " dB" } }.defer;
+		~uiLater.(\b36Amp, { ~b36AmpBox.value = ~b36Amp;
+		   ~b36VolText.string = if (~b36Amp <= 0.01) { "-inf dB" } { ~b36Amp.ampdb.round(0.5).asString ++ " dB" } });
 	};   // new breaths pick the level up; running ones finish at the old level (each breath is < 4 s)
 	~b36VolSlider = Slider().orientation_(\vertical).fixedWidth_(44).minHeight_(160)
 		.value_(\db.asSpec.copy.minval_(-40).maxval_(6).unmap(~b36Amp.ampdb))
@@ -351,15 +359,15 @@ s.waitForBoot {
 	~mkKnob = { |k, v|
 		var lmax = levelNames.size - 1;
 		switch (k,
-			0, { if (~mkPick.(16, v, ~b36N / nv)) { ~b36Set.(v * nv); ~b36Slider.value = ~b36N / nv } },
-			1, { if (~mkPick.(17, v, ~spP.x / lmax)) { var x = (v * lmax).round; if (x != ~spP.x) { ~spSetAll.(x); ~spSlider.value = x / lmax;
-					~spText.string = "speed " ++ levelNames[x.asInteger].asString ++ "x" } } },
-			2, { if (~mkPick.(18, v, ~spP.spread / 1.5)) { ~spRollOffsets.(v * 1.5); ~spSpread.value = v } },
-			3, { if (~mkPick.(19, v, ~b36Glide / 5)) { ~b36Glide = v * 5; ~b36GlideBox.value = ~b36Glide } },
-			4, { if (~mkPick.(20, v, ControlSpec(-40, 6).unmap(~b36Amp.max(0.0001).ampdb))) { ~b36VolSlider.valueAction = v } },
-			5, { if (~mkPick.(21, v, ~b36Fade / 15)) { ~b36Fade = v * 15; ~b36FadeBox.value = ~b36Fade } },
-			6, { if (~mkPick.(22, v, (~gpP[\mean] / 12).sqrt)) { ~gpSlider.valueAction = v } },
-			7, { if (~mkPick.(23, v, ~gpP.ncviIdx / (gapLevels.size - 1))) { ~gpNcvi.valueAction = (v * (gapLevels.size - 1)).round } }
+			0, { if (~mkPick.(16, v, ~b36N / nv)) { ~b36Set.(v * nv); ~uiLater.(~b36Slider, { ~b36Slider.value = ~b36N / nv }) } },
+			1, { if (~mkPick.(17, v, ~spP.x / lmax)) { var x = (v * lmax).round; if (x != ~spP.x) { ~spSetAll.(x);
+					~uiLater.(~spSlider, { ~spSlider.value = x / lmax }); ~uiLater.(~spText, { ~spText.string = "speed " ++ levelNames[x.asInteger].asString ++ "x" }) } } },
+			2, { if (~mkPick.(18, v, ~spP.spread / 1.5)) { ~spRollOffsets.(v * 1.5); ~uiLater.(~spSpread, { ~spSpread.value = v }) } },
+			3, { if (~mkPick.(19, v, ~b36Glide / 5)) { ~b36Glide = v * 5; ~uiLater.(~b36GlideBox, { ~b36GlideBox.value = ~b36Glide }) } },
+			4, { if (~mkPick.(20, v, ControlSpec(-40, 6).unmap(~b36Amp.max(0.0001).ampdb))) { ~b36VolSlider.action.value(Ref(v)); ~uiLater.(~b36VolSlider, { ~b36VolSlider.value = v }) } },
+			5, { if (~mkPick.(21, v, ~b36Fade / 15)) { ~b36Fade = v * 15; ~uiLater.(~b36FadeBox, { ~b36FadeBox.value = ~b36Fade }) } },
+			6, { if (~mkPick.(22, v, (~gpP[\mean] / 12).sqrt)) { ~gpSlider.action.value(Ref(v)); ~uiLater.(~gpSlider, { ~gpSlider.value = v }) } },
+			7, { if (~mkPick.(23, v, ~gpP.ncviIdx / (gapLevels.size - 1))) { var n = (v * (gapLevels.size - 1)).round.asInteger; ~gpNcvi.action.value(Ref(n)); ~uiLater.(~gpNcvi, { ~gpNcvi.value = n }) } }
 		);
 	};
 	~mkButton = { |num|

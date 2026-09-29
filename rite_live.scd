@@ -69,6 +69,14 @@ s.waitForBoot {
 	~rtSeek = { |secs| ~rtSynth !? { ~rtSynth.set(\resetPos, (secs.clip(0, ~rtDur) * ~rtSR).asInteger, \t_reset, 1) } };
 
 	// ---- GUI ----
+	// ---- display rate limit (Jon: nothing on screen may change faster than 4 times a second -- vestibular
+	// migraine). Sound changes at once; a control moved by the nanoKONTROL2 (or by another control) is
+	// redrawn by ONE shared routine every 0.25 s: ~uiLater.(key, { widget.value = x }) -- the last one wins.
+	~uiPending = ~uiPending ? IdentityDictionary.new;
+	~uiLater = { |key, fn| ~uiPending[key] = fn };
+	if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
+		~uiRout = Routine { loop { var p = ~uiPending; ~uiPending = IdentityDictionary.new;
+			p.do { |fn| try { fn.value } }; 0.25.wait } }.play(AppClock) };
 	~rtWin = if (~stHost.notNil) { ~stHost.(\rite) } { Window("rite of spring renders", Rect(80, 80, 820, 420)).front };
 	~rtWin.tryPerform(\toFrontAction_, { ~mkOwners = (~mkOwners ? []).add(\rite).asSet.asArray; ~mkOwner = \rite;
 		{ ~rtMidiText !? { ~rtMidiText.string = "nanoKONTROL2: this window (front)" } }.defer });
@@ -135,7 +143,7 @@ s.waitForBoot {
 	MIDIdef.cc(\rtcc, { |val, cc, chan| var v = val / 127;
 		{ if (~mkOwner == \rite) {
 			if (cc < 8) { if (~rtSteady.(cc, val) and: { ~rtCatch.(cc, v, ~rtLevels[cc]) }) { ~rtSetLevel.(cc, v); ~rtFaderSync = true } };
-			if (cc == 20) { if (~rtSteady.(cc, val) and: { ~rtCatch.(cc, v, ~rtMasterSl.value) }) { ~rtMasterSl.valueAction = v } };
+			if (cc == 20) { if (~rtSteady.(cc, val) and: { ~rtCatch.(cc, v, ~rtMaster) }) { ~rtMasterSl.action.value(Ref(v)); ~uiLater.(~rtMasterSl, { ~rtMasterSl.value = v }) } };
 			if (val > 0) { if (cc == 41) { ~rtPlay.value }; if (cc == 42) { ~rtStop.value } };
 		} }.defer }).permanent_(true);
 	MIDIdef.noteOn(\rtnote, { |vel, note| { if (~mkOwner == \rite) { if (note == 41) { ~rtPlay.value }; if (note == 42) { ~rtStop.value } } }.defer }).permanent_(true);

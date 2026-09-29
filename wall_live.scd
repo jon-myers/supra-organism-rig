@@ -158,6 +158,14 @@ s.waitForBoot {
 
 	// ---- GUI ----
 	~wlWin !? { ~wlWin.onClose = nil; if (~wlWin.isClosed.not) { ~wlWin.close } };
+	// ---- display rate limit (Jon: nothing on screen may change faster than 4 times a second -- vestibular
+	// migraine). Sound changes at once; a control moved by the nanoKONTROL2 (or by another control) is
+	// redrawn by ONE shared routine every 0.25 s: ~uiLater.(key, { widget.value = x }) -- the last one wins.
+	~uiPending = ~uiPending ? IdentityDictionary.new;
+	~uiLater = { |key, fn| ~uiPending[key] = fn };
+	if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
+		~uiRout = Routine { loop { var p = ~uiPending; ~uiPending = IdentityDictionary.new;
+			p.do { |fn| try { fn.value } }; 0.25.wait } }.play(AppClock) };
 	~wlWin = if (~stHost.notNil) { ~stHost.(\wall) } { Window("wall of sound -- live", Rect(700, 60, 620, 520)).front };   // in a tab of show_tabs.scd, or its own window
 	// nanoKONTROL2 follows the FRONT window: bringing this window forward makes it the owner
 	~wlWin.tryPerform(\toFrontAction_, { ~mkOwners = (~mkOwners ? []).add(\wall).asSet.asArray; ~mkOwner = \wall;
@@ -204,9 +212,9 @@ s.waitForBoot {
 		{ if (cc == 58 or: { cc == 59 }) { if (val > 0) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (cc == 59) { 1 } { -1 });
 				~wlMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner } };
 		  if (~mkOwner == \wall) {
-			(0..2).do { |l| if (cc == l) { if (~wlPick.(cc, v, ~wlTargets.()[l] / ~wlMax[l])) { ~wlSliders[l].valueAction = v } } };
-			(16..18).do { |k, l| if (cc == k) { if (~wlPick.(cc, v, (~wlP.trim[l] + 24) / 36)) { ~wlTrims[l].valueAction = v * 36 - 24 } } };
-			if (cc == 20) { if (~wlPick.(cc, v, ~wlMasterSl.value)) { ~wlMasterSl.valueAction = v } };
+			(0..2).do { |l| if (cc == l) { if (~wlPick.(cc, v, ~wlTargets.()[l] / ~wlMax[l])) { ~wlSliders[l].action.value(Ref(v)); ~uiLater.(~wlSliders[l], { ~wlSliders[l].value = v }) } } };
+			(16..18).do { |k, l| if (cc == k) { if (~wlPick.(cc, v, (~wlP.trim[l] + 24) / 36)) { var x = v * 36 - 24; ~wlTrims[l].action.value(Ref(x)); ~uiLater.(~wlTrims[l], { ~wlTrims[l].value = x }) } } };
+			if (cc == 20) { if (~wlPick.(cc, v, ~wlMasterSl.value)) { ~wlMasterSl.action.value(Ref(v)); ~uiLater.(~wlMasterSl, { ~wlMasterSl.value = v }) } };
 			if (cc == 42 and: { val > 0 }) { ~wlHush.() };
 		  } }.defer }).permanent_(true);
 	MIDIdef.noteOn(\wlnote, { |vel, note| { if (note == 58 or: { note == 59 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (note == 59) { 1 } { -1 });

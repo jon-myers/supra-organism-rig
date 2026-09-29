@@ -130,6 +130,14 @@ s.waitForBoot {
 	OSCdef(\swPos, { |m| ~swPos = m[3] / (~swSR ? 44100) }, '/swPos');
 
 	// ---- GUI ----
+	// ---- display rate limit (Jon: nothing on screen may change faster than 4 times a second -- vestibular
+	// migraine). Sound changes at once; a control moved by the nanoKONTROL2 (or by another control) is
+	// redrawn by ONE shared routine every 0.25 s: ~uiLater.(key, { widget.value = x }) -- the last one wins.
+	~uiPending = ~uiPending ? IdentityDictionary.new;
+	~uiLater = { |key, fn| ~uiPending[key] = fn };
+	if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
+		~uiRout = Routine { loop { var p = ~uiPending; ~uiPending = IdentityDictionary.new;
+			p.do { |fn| try { fn.value } }; 0.25.wait } }.play(AppClock) };
 	~swWin = if (~stHost.notNil) { ~stHost.(\sweep) } { Window("phantom pain sweep", Rect(700, 520, 760, 340)).front };   // in a tab of show_tabs.scd, or its own window
 	// nanoKONTROL2 follows the FRONT window: bringing this window forward makes it the owner
 	~swWin.tryPerform(\toFrontAction_, { ~mkOwners = (~mkOwners ? []).add(\sweep).asSet.asArray; ~mkOwner = \sweep;
@@ -211,7 +219,7 @@ s.waitForBoot {
 		{ if ((cc == 58 or: { cc == 59 }) and: { val > 0 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (cc == 59) { 1 } { -1 }); ~swMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner };
 		  if (~mkOwner == \sweep) {
 			if (cc == 0) { if (~swPick.(cc, v, ~swCentreVal)) { ~swCentreSet.(v) } };
-			if (cc == 20) { if (~swPick.(cc, v, ~swMasterSl.value)) { ~swMasterSl.valueAction = v } };
+			if (cc == 20) { if (~swPick.(cc, v, ~swP.master)) { ~swMasterSl.action.value(Ref(v)); ~uiLater.(~swMasterSl, { ~swMasterSl.value = v }) } };
 			if (val > 0) { if (cc == 41) { ~swPlay.value }; if (cc == 42) { ~swStop.value }; if (cc == 46) { ~swVarBtn.valueAction = 1 - ~swVarBtn.value } };
 		  } }.defer }).permanent_(true);
 	MIDIdef.noteOn(\swnote, { |vel, note| { if (note == 58 or: { note == 59 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (note == 59) { 1 } { -1 }); ~swMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner } }.defer }).permanent_(true);
