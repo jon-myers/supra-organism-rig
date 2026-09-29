@@ -375,3 +375,15 @@ Lessons that cost time today (so they are not repeated):
   10.8 Hz flutter; blending frames is worse than repeating them (lab journal LC-8).
 - SLURM oddity: two submissions named `lad2b-notch_3oct` were "CANCELLED by 0" within seconds with no
   log; the same script under another name ran. Cause unknown (scheduler side).
+
+## TODO (Jon, 2026-09-29, during rehearsal -- not started)
+
+- **Phantom Pain original in sync with the sweep.** The "PLAY original" row in `sweep_live.scd` has its own
+  playhead; it should play locked to the sweep's playhead (same position, same start/stop/seek), so the
+  original and the ladder planes are sample-aligned.
+- **Route that original to the headphones device** -- the Multi-Output / aggregate device the metronome
+  (`metro.scd`, own server `~msServer`, port 57131) plays to -- instead of the main output. Likely: play it on
+  the metro server (load phantom_pain.wav there), driven by the sweep's position/transport, since a server
+  can only open one output device.
+- **Paused, uncommitted:** `force_breath.scd` + `show_tabs_force.scd` (force perturbs the 36 breath voices
+  around their centres; tested headless, see this session's notes). Commit and try after rehearsal.
