@@ -4,21 +4,22 @@ show_tabs.scd -- ONE window: a row of tabs along the top, each patch's controls 
   1 36 BREATHS   breath36.scd     2 PHANTOM PAIN SWEEP   sweep_live.scd
   3 WALL OF SOUND  wall_live.scd  4 METRONOME            metro.scd (own server, own output menu)
   5 RITE OF SPRING rite_live.scd  (eight concatenator renders looping together, one fader each)
+  6 FORCE          force_hub.scd  (14 force signals -> buses: simulate / faders / hardware OSC / playback)
 
 Each patch builds its controls into this window's tab panel instead of its own window (the ~stHost hook
 in each file; without it -- show.scd, or evaluating a patch on its own -- they make their own windows as
 before). Hidden tabs keep running; only the view changes. The nanoKONTROL2 follows the selected tab.
-Keys 1-5 switch tabs while this window is focused. Closing this window closes every patch (their normal
+Keys 1-6 switch tabs while this window is focused. Closing this window closes every patch (their normal
 close/teardown runs). Patches load one after another, breath36 last (~15 s).
 */
 (
 var here = PathName(thisProcess.nowExecutingPath).pathOnly;
-var files = (metro: "metro.scd", wall: "wall_live.scd", sweep: "sweep_live.scd", rite: "rite_live.scd", breath36: "breath36.scd");
-var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", breath36: "~b36Players");
-var loadOrder = [\metro, \wall, \sweep, \rite, \breath36];
-~stNames = [\breath36, \sweep, \wall, \metro, \rite];                        // tab order
-~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING");
-~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite);   // metro has no controller mapping
+var files = (metro: "metro.scd", wall: "wall_live.scd", sweep: "sweep_live.scd", rite: "rite_live.scd", force: "force_hub.scd", breath36: "breath36.scd");
+var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players");
+var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36];
+~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force];                        // tab order
+~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE");
+~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force);   // metro has no controller mapping
 
 s = Server.default;
 if (s.serverRunning.not) {
@@ -40,7 +41,7 @@ if (s.serverRunning.not) {
 	~stStack.index = i; ~stButtons.do { |b, j| b.value = (j == i).asInteger };
 	~stOwnerFor[name] !? { |o| ~mkOwners = (~mkOwners ? []).add(o).asSet.asArray; ~mkOwner = o };
 	~stCurrent = name };
-~stWin.view.keyDownAction = { |v, char| var i = "12345".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
+~stWin.view.keyDownAction = { |v, char| var i = "123456".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
 // a patch asks for its panel: give it a fresh child view in its tab (it closes the old one itself on reload)
 ~stHost = { |name| var v = View(); ~stPanels[~stNames.indexOf(name)].layout.add(v); v };
 ~stWin.onClose = { ~stHost = nil };
