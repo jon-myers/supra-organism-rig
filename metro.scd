@@ -30,7 +30,9 @@ Select all, evaluate.
 // macOS default input may be an interface that is not running (Waves SoundGrid),
 // and scsynth opens an input even with 0 channels -- so name a safe one
 ~msServer.options.inDevice = "MacBook Pro Microphone";
-~msForceDevice = ~msForceDevice ? true;   // the named device is used as given; no menu, no fallback   // true: hand the named device to scsynth even if CoreAudio's list lacks it right now
+// false (default): if the named device is not connected (e.g. the Scarlett is at home), use the system
+// output instead of retrying forever. true: hand the name to scsynth even if CoreAudio's list lacks it.
+~msForceDevice = ~msForceDevice ? false;
 ~msPickDevice = { |want|   // returns the device to boot on: the wanted one if present (or forced), else system default (nil)
 	if (want.notNil and: { ~msForceDevice or: { ServerOptions.outDevices.includesEqual(want) } }) { want } {
 		want !? { ("OUTPUT DEVICE '" ++ want ++ "' NOT AVAILABLE -- using system default (is it built in Audio MIDI Setup, with a connected member?)").warn }; nil } };
