@@ -349,3 +349,29 @@ Lessons that cost time today (so they are not repeated):
 - Headless test harness pattern: `Server.default = Server(\x, NetAddr("127.0.0.1", PORT))`,
   outDevice "ZoomAudioD" (silent), executeFile the patch, drive it from a fork, post TEST lines.
   Free the MIDIdefs in tests: Jon's nanoKONTROL2 otherwise steers the test instance too.
+
+## 2026-09-29 checkpoint -- tab 5 (Rite of Spring), fader fixes, metro fallback, sweep Hz labels
+
+- `show_tabs.scd` now has FIVE tabs (keys 1-5): ... | METRONOME | RITE OF SPRING. `show.scd` loads the
+  same five as windows.
+- `rite_live.scd` -- eight Rite of Spring concatenator renders (1929 recording, first 2:30) looping
+  together from ONE synth / one playhead; faders default 0; all eight microtonal (list in `~rtPick`,
+  files in concatenator-corpus/out/listen-rite1929/). nanoKONTROL2: sliders 1-8 levels, knob 5 master,
+  PLAY/STOP. 20-ms dip at the loop seam.
+- `sweep_live.scd` -- ORIGINAL row on top (plain playback of Phantom Pain, independent of the ladder);
+  plane slider has Hz ticks built from each set's plane_NN.json (scales differ: band/notch 0.1-30 Hz
+  log, lowpass 0.08-6.8 Hz linear, highpass 0.08-40 Hz); readout shows the plane's Hz. All 17 ladder
+  sets are local (33 GB), incl. notch_3oct (zero fill, rendered today as job 2456420).
+- nanoKONTROL2 hardware: faders 7 and 8 were sending on their own (fader 8: 114/117/119 at ~100 msg/s).
+  breath36 and rite now filter it: a fader moves freely the way it is going, turning back needs TWO
+  messages in a row >= 4 steps back; a fader lets go when its voices are changed elsewhere (mouse, or
+  another fader while LINKED). Jon worked the faders and both went quiet (0 messages in 15 s).
+  Sweep and wall do not have the filter yet.
+- `metro.scd` -- if the named output (Scarlett) is not connected, it now boots on the system output
+  with a warning instead of retrying forever (`~msForceDevice` default false).
+- Frozen audio = the servers lost their device (default output switched to BTD 700 under them):
+  `Server.killAll;` then evaluate show_tabs.scd.
+- `sharp/latent_slow.py` + `sharp/latent_slow_out/` (ignored): latent SLOW-down 0.5x/0.25x leaves a
+  10.8 Hz flutter; blending frames is worse than repeating them (lab journal LC-8).
+- SLURM oddity: two submissions named `lad2b-notch_3oct` were "CANCELLED by 0" within seconds with no
+  log; the same script under another name ran. Cause unknown (scheduler side).
