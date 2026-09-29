@@ -35,6 +35,11 @@ s = Server.default;
 if (s.serverRunning.not) {
 	s.options.numBuffers = 16384; s.options.maxNodes = 8192; s.options.memSize = 2.pow(19);
 	s.options.numInputBusChannels = 0; s.options.inDevice = "MacBook Pro Microphone";
+	// main output named explicitly (Jon, 2026-09-29): a Bluetooth device that connects (someone's AirPods) can take
+	// the Mac's default output and the main server then fails with "could not initialize audio". Change for the Fireface.
+	~stOutDevice = ~stOutDevice ? "Scarlett 2i2 4th Gen";
+	s.options.outDevice = ~stOutDevice;
+	if (ServerOptions.outDevices.includesEqual(~stOutDevice).not) { ("MAIN OUTPUT '" ++ ~stOutDevice ++ "' IS NOT CONNECTED").warn };
 };
 
 // ---- the window: tabs on top, one panel per patch in a stack ----
