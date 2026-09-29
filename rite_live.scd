@@ -2,8 +2,8 @@
 rite_live.scd -- eight concatenator renders of the Rite of Spring (1929 Stravinsky recording, first 2:30), all
 looping together sample-aligned; eight faders bring each one in. Every fader starts at 0 (silent).
 
-The eight (2026-09-29): one per corpus, microtonal (mic-) wherever it exists, at whichever setting scored higher
-in score_similarity.py (notes/scores/rite1929_*.csv); slot 8 is the densest, best-scoring render overall.
+The eight (2026-09-29): one per corpus, microtonal (mic-) throughout, at whichever setting scored higher
+in score_similarity.py (notes/scores/rite1929_*.csv); slot 8 is the densest (20 layers, rendered 2026-09-29).
 Change ~rtPick before evaluating to swap any of them (file names in concatenator-corpus/out/listen-rite1929/).
 
 ONE synth plays all eight: one shared playhead, eight buffer readers, so they can never drift apart. The loop seam
@@ -26,7 +26,7 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 	["perc",        "mic-perc__rite1929first150__part1000_pd0.50_t200_p5__norm.wav"],
 	["fry",         "mic-fry__rite1929first150__part1000_pd0.50_t200_p5__norm.wav"],
 	["whoosh",      "mic-whoosh__rite1929first150__part1000_pd0.95_t50_p5__norm.wav"],
-	["dense (aug)", "aug-everything__rite1929first150__part1000_pd0.50_t200_p20__norm.wav"]
+	["dense (mic)", "mic-everything__rite1929first150__part1000_pd0.50_t200_p20__norm.wav"]
 ];
 ~rtOutBus = ~rtOutBus ? 0;
 ~rtLevels = 0 ! 8; ~rtMaster = 0.5;
