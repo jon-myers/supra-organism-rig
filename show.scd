@@ -4,6 +4,7 @@ show.scd -- launch the Supra-Organism show patches in one go. Select all, evalua
   metro       metro.scd       own server (port 57131) -> ~msOutDevice (default "Multi-Output Device")
   wall        wall_live.scd   default server: live wall of sound (dyads / voices / chords densities)
   sweep       sweep_live.scd  default server: Phantom Pain LatentFT ladder sweep (two-plane crossfade)
+  rite        rite_live.scd   default server: eight Rite of Spring concatenator renders looping together
   breath36    breath36.scd    default server: 36 breaths -> harmonium, speed, gap
 Set any entry to false below to skip it. The default server's options are set once here, before the
 first boot, so every patch gets enough buffers / nodes / memory. Patches load one after another (each
@@ -19,10 +20,11 @@ var order = [
 	\metro    -> true,
 	\wall     -> true,
 	\sweep    -> true,
+	\rite     -> true,
 	\breath36 -> true,     // loaded last: owns the nanoKONTROL2 at start
 ];
-var files = (metro: "metro.scd", wall: "wall_live.scd", sweep: "sweep_live.scd", breath36: "breath36.scd");
-var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", breath36: "~b36Players");
+var files = (metro: "metro.scd", wall: "wall_live.scd", sweep: "sweep_live.scd", rite: "rite_live.scd", breath36: "breath36.scd");
+var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", breath36: "~b36Players");
 
 ~stHost = nil;   // separate windows (show_tabs.scd sets its own host)
 s = Server.default;

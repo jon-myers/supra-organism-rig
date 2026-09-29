@@ -95,6 +95,12 @@ s.waitForBoot {
 		~swVariants = variants;
 		files = files.select { |f| (~swP.variant == "") or: { f.contains(~swP.variant ++ ".") } }.keep(~swMaxPlanes);
 		~swFiles = files; ~swN = files.size; ~swSetName = name; ~swDir = dir; ~swPlaneInfo = IdentityDictionary.new;
+		// each plane's rate in Hz, from its plane_NN.json "desc" (the first number before " Hz": band/notch centre,
+		// lowpass/highpass cutoff). The scale differs per set, so the slider's labels are built from these.
+		~swPlaneHz = files.collect { |f| var jp = dir +/+ f.basename.copyRange(0, 7) ++ ".json", m;
+			if (File.exists(jp)) { m = File.readAllString(jp).findRegexp("[0-9.]+ Hz"); if (m.notEmpty) { m[0][1].asFloat } } };
+		if (~swPlaneHz.any(_.isNil) or: { ~swPlaneHz.differentiate.drop(1).any { |d| d <= 0 } }) { ~swPlaneHz = nil };
+		{ ~swCentreSl !? { ~swCentreSl.refresh } }.defer;
 		{ ~swSetText.string = name.asString ++ ":  loading " ++ ~swN ++ " planes into memory ..."; ~swPlayBtn.enabled = false }.defer;
 		fork {
 			var t0 = Main.elapsedTime;
@@ -137,10 +143,18 @@ s.waitForBoot {
 	// handle is redrawn only ~swDrawHz times a second, in steps (no 60-fps tracking under the cursor)
 	~swDrawHz = 4; ~swCentreVal = 0; ~swCentreShown = 0;
 	~swCentreSet = { |v| ~swCentreVal = v.clip(0, 1); ~swSetCentre.(~swCentreVal * ((~swN ? 1) - 1).max(0)) };
-	~swCentreSl = UserView().fixedHeight_(44).background_(Color.grey(0.93))
-		.drawFunc_({ |uv| var w = uv.bounds.width, h = uv.bounds.height, x = 8 + (~swCentreShown * (w - 16));
-			Pen.fillColor = Color.grey(0.75); Pen.fillRect(Rect(8, h / 2 - 3, w - 16, 6));
-			Pen.fillColor = Color.grey(0.25); Pen.fillRect(Rect(x - 5, 4, 10, h - 8)) })
+	// Hz labels along the top: where each round rate falls on this set's planes (log-interpolated between planes)
+	~swHzPos = { |hz| var a = ~swPlaneHz, i;
+		if (a.isNil or: { hz < a.first } or: { hz > a.last }) { nil } {
+			i = a.indexOfGreaterThan(hz) ? (a.size - 1); i = (i - 1).max(0);
+			(i + ((hz / a[i]).log / (a[(i + 1).min(a.size - 1)] / a[i]).max(1.0001).log)) / (a.size - 1).max(1) } };
+	~swCentreSl = UserView().fixedHeight_(62).background_(Color.grey(0.93))
+		.drawFunc_({ |uv| var w = uv.bounds.width, h = uv.bounds.height, x = 8 + (~swCentreShown * (w - 16)), ty = 20;
+			[0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 40].do { |hz| ~swHzPos.(hz) !? { |t| var lx = 8 + (t * (w - 16));
+				Pen.strokeColor = Color.grey(0.6); Pen.line(lx @ (ty - 4), lx @ (ty + 2)); Pen.stroke;
+				(hz.asString ++ (if (hz == 0.1) { " Hz" } { "" })).drawCenteredIn(Rect(lx - 30, 0, 60, 14), Font.default.size_(10), Color.grey(0.3)) } };
+			Pen.fillColor = Color.grey(0.75); Pen.fillRect(Rect(8, ty + 16, w - 16, 6));
+			Pen.fillColor = Color.grey(0.25); Pen.fillRect(Rect(x - 5, ty + 4, 10, h - ty - 8)) })
 		.mouseDownAction_({ |uv, x| ~swCentreSet.((x - 8) / (uv.bounds.width - 16)) })
 		.mouseMoveAction_({ |uv, x| ~swCentreSet.((x - 8) / (uv.bounds.width - 16)) });
 	~swMasterSl = Slider().orientation_(\horizontal).fixedHeight_(22).value_(~swP.master)
@@ -170,7 +184,8 @@ s.waitForBoot {
 	~swRout = Routine { loop {
 		if (~swDirty and: { ~swN > 0 }) { var c = ~swP.centre, k0 = c.floor.asInteger, f = c - k0, jp;
 			~swDirty = false;
-			~swCentreText.string = if (f < 0.005) { "plane " ++ (k0 + 1) } { "plane " ++ (k0 + 1) ++ " / " ++ (k0 + 2) ++ "   (" ++ (f * 100).round.asInteger ++ " %)" };
+			~swCentreText.string = (if (f < 0.005) { "plane " ++ (k0 + 1) } { "plane " ++ (k0 + 1) ++ " / " ++ (k0 + 2) ++ "   (" ++ (f * 100).round.asInteger ++ " %)" })
+				++ (~swPlaneHz !? { |a| "   " ++ a[c.round.asInteger.clip(0, a.size - 1)].round(if (a[c.round.asInteger.clip(0, a.size - 1)] < 1) { 0.01 } { 0.1 }) ++ " Hz" } ? "");
 			jp = ~swDir +/+ ("plane_" ++ (c.round.asInteger + 1).asString.padLeft(2, "0") ++ ".json");
 			~swInfo.string = if (File.exists(jp)) { File.readAllString(jp).keep(160) } { "" } };
 		if (~swCentreShown != ~swCentreVal) { ~swCentreShown = ~swCentreVal; ~swCentreSl.refresh };
