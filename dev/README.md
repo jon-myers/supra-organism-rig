@@ -56,3 +56,16 @@ flac, mono or stereo), play/stop, position (seek), loop, and its own dB volume. 
 server, i.e. to the in-ear headphones device, independent of the click. Add a file to `in_ears/` and press
 rescan. Present: Phantom Pain (a link to concatenator-corpus/targets/), Old Town Road (yt-dlp, 48 kHz).
 Tested headless: play, -20 dB volume (-40 -> -59 dB), seek, stops itself at the end, loop wraps, stop = silent.
+
+## FORCE CONCAT (tab 8, dev/force_concat.scd + concatenator-corpus/live_force_shim.py, 2026-09-30)
+1. SINES: Marc-Andre's ForceSensorSimulator.maxpat x6 -- loudness = DC x sensitivity, pitch = base note + AC x amount (Hz;
+   default 1000, the patch used 4000). Base notes (MIDI), mutes, on/off, dB volume. Main server, outs 1-2.
+2. LIVE CONCATENATOR: Python process (started/stopped by the tab, pid tracked, killed on close) that synthesizes the same
+   six sines from /fc/force (sent 30 Hz from ~fhValues) and has The Concatenator rebuild them from the corpus in the menu
+   (all 46 folders under concatenator-corpus/corpus, labelled with size; >0.7 GB marked SLOW/LARGE), playing straight to
+   the chosen output device via pyaudio at 44.1 kHz. Knobs: level (dB), wet, temperature, grain time. Changing corpus or
+   device restarts the process ("loading ... s"). Log: /tmp/force_concat_<langPort>.log.
+Measured: offline 30 s renders, v9-aug28-all (24 min corpus) load 1.8 s, 5.9 ms/frame (max 6.9), RSS 5.0 GB;
+v7-harmonium-all (21 min) load 1.6 s, 6.2 ms (max 8.6), 4.3 GB; live on ZoomAudioD 48 kHz: 7-8 ms/frame vs 23.2 ms
+budget, paced in real time, 2 startup overruns. RAM ~10 GB per corpus-hour: v10-everything / aug-* need 15-30 GB.
+Untested: real output device, running alongside the full live show, the dancers' real force data.
