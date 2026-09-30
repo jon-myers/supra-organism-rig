@@ -45,7 +45,7 @@ before evaluating to load fewer. Select all, evaluate.
 ~b36Sharp = PathName(thisProcess.nowExecutingPath).pathOnly +/+ ".." +/+ "sharp";
 ~b36SpeedLevels = ~b36SpeedLevels ? [1.5, 2, 3, 4, 6, 8, 10];
 ~b36Midi = ~b36Midi ? true;
-~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = false;   // STEREO by default (2026-09-30: quad not reaching the speakers yet; tick QUAD to try)   // quad outputs, in circle order
+~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = true;   // QUAD by default again (2026-09-30, Jon)   // quad outputs, in circle order
 ~b36N = 0; ~b36Fade = 3.0; ~b36Amp = 0.8; ~b36Comp = false; ~b36Spread = 0.9;
 ~b36Glide = 0.5;    // seconds for a morph slider move to settle
 ~spP = (x: 0, spread: 0.5);
