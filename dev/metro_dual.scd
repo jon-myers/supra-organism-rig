@@ -29,7 +29,7 @@ Select all, evaluate.
 ~msInDevice  = nil;   // no input: this patch only makes sound (avoids in/out sample-rate clashes)
 ~msOutDevice = ~msOutDevice ? "Scarlett 2i2 4th Gen";   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
-~msGlide = 0.5; ~msAmp = 0.5; ~msVoice = 0;
+~msGlide = 0.5; ~msAmp = -44.dbamp; ~msVoice = 0;   // headphone click volume: -44 dB by default (Jon, 2026-09-29)
 ~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
 ~msTargetHz = 4;    // 'target' line updates per second while you slide
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
@@ -37,7 +37,7 @@ Select all, evaluate.
 ~msAccentOn = true; // false = every beat sounds the same (toggle in the window)
 ~mdHpOn = ~mdHpOn ? true;            // headphone (metro server) click on
 ~mdIfOn = ~mdIfOn ? false;           // interface (main server) click off by default
-~mdIfAmp = ~mdIfAmp ? 0.5; ~mdIfPair = ~mdIfPair ? 0; ~mdIfDelay = ~mdIfDelay ? 0;   // level x, output pair index, delay s
+~mdIfAmp = -44.dbamp; ~mdIfPair = ~mdIfPair ? 0; ~mdIfDelay = ~mdIfDelay ? 0;   // level x, output pair index, delay s
 // IN-EAR TRACKS: audio files in supra-organism/in_ears/ (wav / aif / flac; mono or stereo) played on THIS server,
 // i.e. to the in-ear headphones, with their own volume; independent of the click. Add files, press rescan.
 ~mdTrackDir = PathName(thisProcess.nowExecutingPath).pathOnly +/+ ".." +/+ ".." +/+ "in_ears";
@@ -215,7 +215,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdIfVol = Slider().orientation_(\horizontal).fixedHeight_(34).value_(~mdToPos.(~mdIfAmp)).action_({ |sl| ~mdSetIfAmp.(~mdToAmp.(sl.value)) });
 	~mdHpDbText = StaticText().string_(~mdDbStr.(~msAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
 	~mdIfDbText = StaticText().string_(~mdDbStr.(~mdIfAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
-	~msAmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.05).scroll_step_(0.05).decimals_(2)
+	~msAmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.001).scroll_step_(0.001).decimals_(4)
 		.value_(~msAmp).fixedWidth_(56)
 		.action_({ |nb| ~mdSetHpAmp.(nb.value); ~uiLater.(\mdHpVol, { ~mdHpVol.value = ~mdToPos.(~msAmp) }) });
 	~msCycleBox = NumberBox().clipLo_(1).clipHi_(64).step_(1).scroll_step_(1).decimals_(0)
