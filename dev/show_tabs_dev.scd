@@ -6,7 +6,7 @@ Same window and tabs as show_tabs.scd, with three dev variants swapped in (see d
                                            headphone device
   METRONOME           dev/metro_dual.scd   + a toggleable click on the interface (main server), dB volume per path
   7 BREATH FORCE      dev/force_breath.scd force perturbs the 36 breath voices around their centres
-Unchanged, loaded from rig/: breath36.scd, rite_live.scd, force_hub.scd. (wall_live.scd: dev copy, live master + trims.)
+Unchanged, loaded from rig/: rite_live.scd, force_hub.scd. Dev copies: wall_live.scd (live master + trims), breath36.scd (QUAD on outs 3-6).
 To try it: Server.killAll; then select all here, evaluate.
 
 show_tabs.scd -- ONE window: a row of tabs along the top, each patch's controls underneath. Select all, evaluate.
@@ -24,7 +24,7 @@ close/teardown runs). Patches load one after another, breath36 last (~15 s).
 */
 (
 var here = PathName(thisProcess.nowExecutingPath).pathOnly;
-var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "../rite_live.scd", force: "../force_hub.scd", breath36: "../breath36.scd", fbreath: "force_breath.scd");
+var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "../rite_live.scd", force: "../force_hub.scd", breath36: "breath36.scd", fbreath: "force_breath.scd");
 var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players", fbreath: "~fbGrid");
 var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath];
 ~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath];                        // tab order
@@ -35,6 +35,7 @@ s = Server.default;
 if (s.serverRunning.not) {
 	s.options.numBuffers = 16384; s.options.maxNodes = 8192; s.options.memSize = 2.pow(19);
 	s.options.numInputBusChannels = 0; s.options.inDevice = "MacBook Pro Microphone";
+	s.options.numOutputBusChannels = 8;   // quad breath36 on outs 3-6 (buses 2-5); stereo patches stay on 1-2
 	// main output named explicitly (Jon, 2026-09-29): a Bluetooth device that connects (someone's AirPods) can take
 	// the Mac's default output and the main server then fails with "could not initialize audio". Change for the Fireface.
 	// Preference list: the first one connected wins (PreSonus Studio 1824c from 2026-09-30; add the Fireface's name here).
