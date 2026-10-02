@@ -37,9 +37,14 @@ var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \amb
 s = Server.default;
 // sample rates (2026-10-02): before anything boots, put the default INPUT back on the MacBook mic (a headset that is the default
 // input drops into call mode at 16-32 kHz) and the Fireface + Multi-Output Device (+ members) at 48 kHz. rig/tools/audiorate.swift.
-~stRate = ~stRate ? 44100;   // THE rig's sample rate (2026-10-02: 44.1 k, not 48 k -- Bluetooth in-ears in call mode still offer 44.1 k,
+~stRate = 44100;   // THE rig's sample rate (fallback; replaced below by the rate audiorate picks) (2026-10-02: 44.1 k, not 48 k -- Bluetooth in-ears in call mode still offer 44.1 k,
                             // so the Fireface, the Multi-Output in-ears and the lav can share one rate; the renders are 44.1 k too)
-if (File.exists("~/.local/bin/audiorate".standardizePath)) { ("tabs: audio rates\n" ++ ("~/.local/bin/audiorate rig " ++ ~stRate).standardizePath.unixCmdGetStdOut).postln };
+// ...chosen AT LAUNCH (2026-10-02): `audiorate rig` (no rate) picks the best rate the in-ears AND the Fireface offer right now
+// (48 k, else 44.1 k) and prints "RIG RATE n"; everything boots at that. Set ~stRate before running this to force one.
+if (File.exists("~/.local/bin/audiorate".standardizePath)) { var out = ("~/.local/bin/audiorate rig " ++ (~stRateForce ? "")).standardizePath.unixCmdGetStdOut, r;
+	("tabs: audio rates\n" ++ out).postln;
+	r = out.findRegexp("RIG RATE ([0-9]+)"); if (r.size > 1) { ~stRate = r[1][1].asInteger } };
+("tabs: rig sample rate = " ++ ~stRate).postln;
 if (s.serverRunning.not) {
 	s.options.numBuffers = 16384; s.options.maxNodes = 8192; s.options.memSize = 2.pow(19);
 	s.options.numInputBusChannels = 0; s.options.inDevice = "MacBook Pro Microphone";

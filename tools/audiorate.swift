@@ -85,8 +85,17 @@ case "output":
     guard args.count == 2, let d = find(args[1], wantIn: false) else { print("no output device matches"); exit(2) }
     setDefault(kAudioHardwarePropertyDefaultOutputDevice, d, "output")
 case "rig":   // audiorate rig [rate]  (default 44100, the rig's rate since 2026-10-02: Bluetooth members offer 44.1 k even in call mode)
-    let R = args.count > 1 ? (Double(args[1]) ?? 44100) : 44100
+    // no rate given = AUTO (2026-10-02): the best rate BOTH the Multi-Output Device (= every in-ear member) and the Fireface
+    // offer right now, 48 k first, then 44.1 k. Bluetooth members change what they offer when they fall into call mode.
     if let m = find("MacBook Pro Microphone", wantIn: true) { setDefault(kAudioHardwarePropertyDefaultInputDevice, m, "input") }
+    usleep(1_500_000)
+    var R = 48000.0
+    if args.count > 1, let r = Double(args[1]) { R = r } else {
+        let mo = find("Multi-Output").map(rates) ?? [], ff = find("Fireface").map(rates) ?? []
+        let both = [48000.0, 44100.0].filter { mo.contains($0) && ff.contains($0) }
+        R = both.first ?? 48000
+        print("auto: Multi-Output offers \(mo.map { Int($0) }), Fireface offers \(ff.map { Int($0) }) -> \(Int(R))" + (both.isEmpty ? "  (NO shared rate: an in-ear member is in call mode; the lav will be off)" : ""))
+    }
     var ok = true
     if let f = find("Fireface") { ok = setRate(f, R) && ok } else { print("Fireface: not connected"); ok = false }
     usleep(1_500_000)   // a headset leaves call mode a moment after its mic is released
@@ -94,6 +103,6 @@ case "rig":   // audiorate rig [rate]  (default 44100, the rig's rate since 2026
         for s in ids(mo, kAudioAggregateDevicePropertyActiveSubDeviceList) where rate(s) != R { ok = setRate(s, R) && ok }
         ok = setRate(mo, R) && ok
     } else { print("Multi-Output Device: not found"); ok = false }
-    print(""); list(); exit(ok ? 0 : 1)
+    print(""); list(); print("RIG RATE \(Int(R))"); exit(ok ? 0 : 1)
 default: print("usage: audiorate [list | set \"<name>\" <Hz> | input \"<name>\" | output \"<name>\" | rig]"); exit(2)
 }
