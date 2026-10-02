@@ -131,7 +131,11 @@ if ((~msMicRate ? 0) < 8000) { ~msMicRate = 48000 };   // unreadable -> the rig'
 		SystemClock.sched(15, { if (~msWantRunning and: { ~msServer.serverRunning.not }) { ~msTryBoot.(0) }; nil });
 	} {
 		var rate = ~msAttempts[i][0], inDev = ~msAttempts[i][1], booted = false, onBoot;
+		~msInChans = ~msInChans ?? { ~msServer.options.numInputBusChannels.max(1) };
 		~msServer.options.sampleRate = rate; ~msServer.options.inDevice = inDev;
+		// no input device = NO INPUT AT ALL (2026-10-02): nil used to open the system default input, which was an AirPods mic --
+		// and opening an AirPods mic puts them into call mode (24 kHz in / 32 kHz out), dragging the Multi-Output Device down
+		~msServer.options.numInputBusChannels = if (inDev.isNil) { 0 } { ~msInChans };
 		onBoot = { booted = true; ServerBoot.remove(onBoot, ~msServer); ~msReconnects = 0; { ~msBuild.value }.fork(AppClock) };
 		ServerBoot.add(onBoot, ~msServer);
 		~msExpectQuit = true; ~msServer.boot; { ~msExpectQuit = false }.defer(2);

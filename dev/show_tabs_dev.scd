@@ -35,6 +35,9 @@ var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \amb
 ~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36, solo: \breath36, follow: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
 
 s = Server.default;
+// sample rates (2026-10-02): before anything boots, put the default INPUT back on the MacBook mic (a headset that is the default
+// input drops into call mode at 16-32 kHz) and the Fireface + Multi-Output Device (+ members) at 48 kHz. rig/tools/audiorate.swift.
+if (File.exists("~/.local/bin/audiorate".standardizePath)) { ("tabs: audio rates\n" ++ ("~/.local/bin/audiorate rig".standardizePath).unixCmdGetStdOut).postln };
 if (s.serverRunning.not) {
 	s.options.numBuffers = 16384; s.options.maxNodes = 8192; s.options.memSize = 2.pow(19);
 	s.options.numInputBusChannels = 0; s.options.inDevice = "MacBook Pro Microphone";
