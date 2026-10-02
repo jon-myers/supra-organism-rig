@@ -6,7 +6,9 @@ Same window and tabs as show_tabs.scd, with three dev variants swapped in (see d
                                            headphone device
   METRONOME           dev/metro_dual.scd   + a toggleable click on the interface (main server), dB volume per path
   7 BREATH FORCE      dev/force_breath.scd force perturbs the 36 breath voices around their centres
-Unchanged, loaded from rig/: rite_live.scd, force_hub.scd. Dev copies: wall_live.scd (live master + trims), breath36.scd (QUAD on outs 3-6).
+  9 CONCAT            dev/concat_live.scd  The Concatenator live: corpus menu x target menu (Phantom Pain, ocean, ...), to a device
+  8 AMBI              dev/ambi.scd         first-order ambisonics (ATK): quad decode to outs 3-6 + binaural to Phones 1 (7/8)
+Unchanged, loaded from rig/: force_hub.scd. Dev copy since 2026-10-01: rite_live.scd (ambisonic + GO / SWIRL triggers). Dev copies: wall_live.scd (live master + trims), breath36.scd (QUAD on outs 3-6).
 To try it: Server.killAll; then select all here, evaluate.
 
 show_tabs.scd -- ONE window: a row of tabs along the top, each patch's controls underneath. Select all, evaluate.
@@ -23,13 +25,14 @@ Keys 1-6 switch tabs while this window is focused. Closing this window closes ev
 close/teardown runs). Patches load one after another, breath36 last (~15 s).
 */
 (
-var here = PathName(thisProcess.nowExecutingPath).pathOnly;
-var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "../rite_live.scd", force: "../force_hub.scd", breath36: "breath36.scd", fbreath: "force_breath.scd");
-var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players", fbreath: "~fbGrid");
-var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath];
-~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath];                        // tab order
-~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE", fbreath: "BREATH FORCE");
-~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
+// nowExecutingPath is nil when this is run from an unsaved / untitled document (2026-10-01): fall back to the known location
+var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/show_tabs_dev.scd".standardizePath).pathOnly;
+var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "rite_live.scd", force: "../force_hub.scd", breath36: "breath36.scd", fbreath: "force_breath.scd", ambi: "ambi.scd", concat: "concat_live.scd");
+var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players", fbreath: "~fbGrid", ambi: "~ambiQuadSyn", concat: "~clRunBtn");
+var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \ambi, \concat];   // ambi after breath36 (reads ~b36Meta)
+~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath, \ambi, \concat];                        // tab order
+~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE", fbreath: "BREATH FORCE", ambi: "AMBI", concat: "CONCAT");
+~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
 
 s = Server.default;
 if (s.serverRunning.not) {
@@ -38,9 +41,10 @@ if (s.serverRunning.not) {
 	s.options.numOutputBusChannels = 8;   // quad breath36 on outs 3-6 (buses 2-5); stereo patches stay on 1-2
 	// main output named explicitly (Jon, 2026-09-29): a Bluetooth device that connects (someone's AirPods) can take
 	// the Mac's default output and the main server then fails with "could not initialize audio". Change for the Fireface.
-	// Preference list: the first one connected wins (PreSonus Studio 1824c from 2026-09-30; add the Fireface's name here).
-	~stOutPrefs = ~stOutPrefs ? ["Studio 1824c", "Scarlett 2i2 4th Gen"];
-	~stOutDevice = ~stOutPrefs.detect { |d| ServerOptions.outDevices.includesEqual(d) };
+	// Preference list: the first one connected wins (2026-10-01: RME Fireface UCX II first, then the PreSonus Studio 1824c).
+	// Matched by name PREFIX: CoreAudio appends the serial ("Fireface UCX II (24312654)").
+	~stOutPrefs = ~stOutPrefs ? ["Fireface UCX II", "Studio 1824c", "Scarlett 2i2 4th Gen"];
+	~stOutDevice = ~stOutPrefs.collect { |p| ServerOptions.outDevices.detect { |d| d.beginsWith(p) } }.reject(_.isNil).first;
 	if (~stOutDevice.isNil) { ("NONE OF " ++ ~stOutPrefs ++ " IS CONNECTED -- main output = the Mac's default").warn };
 	s.options.outDevice = ~stOutDevice;
 	("show_tabs_dev: main output = " ++ (~stOutDevice ? "system default")).postln;
@@ -60,7 +64,7 @@ if (s.serverRunning.not) {
 	~stStack.index = i; ~stButtons.do { |b, j| b.value = (j == i).asInteger };
 	~stOwnerFor[name] !? { |o| ~mkOwners = (~mkOwners ? []).add(o).asSet.asArray; ~mkOwner = o };
 	~stCurrent = name };
-~stWin.view.keyDownAction = { |v, char| var i = "1234567".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
+~stWin.view.keyDownAction = { |v, char| var i = "123456789".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
 // a patch asks for its panel: give it a fresh child view in its tab (it closes the old one itself on reload)
 ~stHost = { |name| var v = View(); ~stPanels[~stNames.indexOf(name)].layout.add(v); v };
 ~stWin.onClose = { ~stHost = nil };

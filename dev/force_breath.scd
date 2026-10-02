@@ -118,8 +118,9 @@ s.waitForBoot {
 	~fbBlocks = [4, 5, 4, 5, 4, 5, 4, 5];
 	~fbGrid = UserView().minHeight_(5 * 52 + 30).background_(Color.grey(0.96)).drawFunc_({ |uv|
 		var w = uv.bounds.width, cw = (w - 16) / 8, v = 0;
-		~fbBlocks.do { |sz, g| ("fader " ++ (g + 1)).drawAtPoint((8 + (g * cw) + 4) @ 4, Font.default.size_(11).boldVariant, Color.grey(0.35));
-			sz.do { |r| var i = v + r, x = 8 + (g * cw) + 3, y = 24 + (r * 52), p = ~fbShown[i] ? 0, d = ~fbP[\depth].max(0.001), f = (p / d).clip(-1, 1);
+		// columns = breath36's fader groups (tiled g, g+8, ... since 2026-10-01), else the old blocks
+		(~mkGroupVoices ?? { var st = 0; ~fbBlocks.collect { |sz| var r = (st..(st + sz - 1)); st = st + sz; r } }).do { |vs, g| ("fader " ++ (g + 1)).drawAtPoint((8 + (g * cw) + 4) @ 4, Font.default.size_(11).boldVariant, Color.grey(0.35));
+			vs.do { |i, r| var x = 8 + (g * cw) + 3, y = 24 + (r * 52), p = ~fbShown[i] ? 0, d = ~fbP[\depth].max(0.001), f = (p / d).clip(-1, 1);
 				Pen.fillColor = Color.grey(0.88); Pen.fillRect(Rect(x, y, cw - 6, 46));
 				if (~fbP[\showLive] and: { ~fbP[\mode] == \perturb }) {
 					Pen.fillColor = if (f >= 0) { Color(0.35, 0.55, 0.75, 0.55) } { Color(0.75, 0.5, 0.35, 0.55) };
@@ -130,7 +131,7 @@ s.waitForBoot {
 					switch (~fbKinds[i], \single, { Color.black }, \together, { Color(0.1, 0.3, 0.6) }, \against, { Color(0.6, 0.25, 0.1) }));
 				if (~fbP[\showLive] and: { ~fbP[\mode] == \perturb }) {
 					((if (p >= 0) { "+" } { "" }) ++ (p * 100).round.asInteger ++ "%").drawAtPoint((x + 3) @ (y + 32), Font.default.size_(10), Color.grey(0.25)) } };
-			v = v + sz } });
+			} });
 	~fbStatus = StaticText().string_("").fixedHeight_(18);
 	~fbWinBox = NumberBox().value_(~fbP[\win]).clipLo_(0.5).clipHi_(60).step_(0.5).scroll_step_(0.5).decimals_(1).fixedWidth_(50).action_({ |b| ~fbSet.(\win, b.value) });
 	~fbGainBox = NumberBox().value_(~fbP[\actGain]).clipLo_(0.1).clipHi_(20).step_(0.1).scroll_step_(0.1).decimals_(1).fixedWidth_(50).action_({ |b| ~fbSet.(\actGain, b.value) });

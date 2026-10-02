@@ -69,3 +69,32 @@ Measured: offline 30 s renders, v9-aug28-all (24 min corpus) load 1.8 s, 5.9 ms/
 v7-harmonium-all (21 min) load 1.6 s, 6.2 ms (max 8.6), 4.3 GB; live on ZoomAudioD 48 kHz: 7-8 ms/frame vs 23.2 ms
 budget, paced in real time, 2 startup overruns. RAM ~10 GB per corpus-hour: v10-everything / aug-* need 15-30 GB.
 Untested: real output device, running alongside the full live show, the dancers' real force data.
+
+## 2026-10-01: force in the 36 BREATHS window, tiled faders, AMBI tab, Fireface first
+- **breath36.scd, FORCE -> voices 1-6:** above voice sliders 1-6, a toggle (S1..S6) and an offset knob: morph = slider +
+  0.5 x knob x sensor k, clipped 0..1 (knob down = nothing, up = +-half the range). Row below the sliders: signal AC / DC,
+  sensitivity, smoothing; CENTRAL -> speed (toggle, knob, signal: ensemble activity 5 s / slow level / central DC / AC;
+  speed = slider + 0.5 x knob x c x (levels - 1), levels change at each voice's next breath). Uses its own input on the
+  control synth (`fbus/famt`), separate from force_breath's `modbus/modamt`, so tab 7 and this never fight. Reads ~fhBus
+  (FORCE tab). Headless test (1x voices only, MIDI off): 11/11 pass. Central -> speed arithmetic tested earlier, not with
+  real speed levels loaded.
+- **nanoKONTROL2 faders TILED:** fader g = voices g, g+8, g+16, g+24, g+32 (faders 1-4 five voices, 5-8 four). With the voices
+  tiled a/g/r/s, each fader is one performer (1 and 5 anna, 2 and 6 grisha, 3 and 7 raymond, 4 and 8 sora). Tab 7's grid
+  draws the same columns.
+- **ambi.scd (tab 8 AMBI):** first-order ambisonics with ATK v5.0.7 (sc3-plugins 3.14.1 arm64, ATK matrices v1.0.3 -- all
+  installed 2026-10-01; the old x86 sc3-plugins are in SuperCollider/archive/). Quad decode to outs 3-6 (speaker map +
+  identify), binaural to Phones 1 = outs 7/8 on the Fireface UCX II, HRTF menu, test source, breath36 "AMBI" tick-box.
+- **show_tabs_dev.scd:** main output prefers the Fireface UCX II (name-prefix match: CoreAudio adds the serial), then Studio
+  1824c, then Scarlett.
+- **rite_live.scd (dev copy, tab 5):** ambisonic (render k at its own direction, clockwise from front, 45 deg apart; stereo as
+  a 30-deg arc; default on once AMBI loads), per-render time offsets against the shared playhead (0..0.8 s), GO 1-8
+  (buttons + Korg S buttons in the RITE tab) with fades and a fresh random offset, SWIRL (N neighbours in circle order,
+  step ms apart, growing offsets), ALL (8-swirl), SCATTER, RE-ROLL (1.5 s glide), HUSH. Headless test passes (direction,
+  swirl timing and offsets, scatter, stereo fallback).
+- **ambi.scd quad map fixed:** the default sent back-left to out 4 and front-right to out 6; now circle order 3 FL, 4 FR,
+  5 BR, 6 BL. A session still holding the old map is corrected on reload. Wall + breaths default to AMBI when the tab loads.
+- **metro_dual.scd OUTPUTS box:** one 2 x 2 matrix at the top of tab 4 -- SPEAKERS (main server: output pair, delay ms) /
+  IN-EARS (metro server: device menu, the Multi-Output Device) x CLICK / TRACK, each an on/off tick + dB. The in-ear track
+  also plays on the speakers: loaded on both servers, started with the same timestamp (+ speaker delay), the speakers'
+  copy re-cued if > 30 ms off twice in a row; readout "speakers vs in-ears: N ms off, re-cued Nx". Headless two-server
+  test passes (both play aligned, untick = silent, 1-s knock re-cued to 17 ms, stop frees both).

@@ -21,6 +21,11 @@ Lowering a slider never cuts anything: events finish on their own (HUSH fades al
 Output: ~wlOutBus (default 0) on the default server. nanoKONTROL2 (when ~mkOwner == \wall):
 sliders 1-3 = densities, knobs 1-3 = layer trims, knob 5 = master; TRACK < > passes the surface
 between patches. Select all, evaluate (after breath36.scd if both are used).
+AMBI (2026-10-01): with ~wlAmbi true (the AMBI tab's "WALL -> AMBI" tick-box) and dev/ambi.scd loaded, NEW events go to the
+ambisonic field instead: pos -> azimuth pos * pi (the same random placement, now round the whole circle), dyads keep their
+L / R as an arc set by their width, voices sit at their singer's home round the circle (dry by default), out-of-tune
+chords are spread very wide (three decorrelated copies per channel over each half circle). Room per layer ~wlRoomDb
+(default dyads none, voices none, chords -20 dB). Events already sounding finish where they started.
 */
 (
 var here = PathName(thisProcess.nowExecutingPath).pathOnly;
@@ -40,7 +45,8 @@ s.waitForBoot {
 	~wlTick !? { ~wlTick.stop }; ~wlRout !? { ~wlRout.stop };
 	~wlGroup !? { ~wlGroup.free }; ~wlRoom !? { ~wlRoom.free }; ~wlLimiter !? { ~wlLimiter.free; ~wlLimiter = nil };
 	~wlDry !? { ~wlDry.free }; ~wlSend !? { ~wlSend.free };
-	~wlMasterSyn !? { ~wlMasterSyn.free }; ~wlMixBus !? { ~wlMixBus.free }; ~wlAmpBus !? { ~wlAmpBus.do(_.free) };
+	~wlMasterSyn !? { ~wlMasterSyn.free }; ~wlMixBus !? { ~wlMixBus.free };
+	~wlMasterA !? { ~wlMasterA.free }; ~wlMasterA = nil; ~wlRoomA !? { ~wlRoomA.free }; ~wlRoomA = nil; ~wlAmbiBus !? { ~wlAmbiBus.free }; ~wlSendA !? { ~wlSendA.free }; ~wlAmpBus !? { ~wlAmpBus.do(_.free) };
 	((~wlDyadBufs ? []) ++ (~wlVoiceBufs ? []) ++ (~wlChordBufs ? []) ++ (~wlIrBufs ? [])).do { |b| b !? { b.free } };
 	~wlDyadBufs = nil; ~wlVoiceBufs = nil; ~wlChordBufs = nil; ~wlIrBufs = nil;
 	MIDIdef(\wlcc).free; MIDIdef(\wlnote).free;
@@ -84,6 +90,42 @@ s.waitForBoot {
 		Out.ar(out, (Balance2.ar(sig[0], sig[1], pos) * w + (Pan2.ar(mono, pos) * (1 - w))) * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp);
 	}).add;
 	SynthDef(\wlMaster, { |in = 0, out = 0, master = 0.7| Out.ar(out, In.ar(in, 2) * master.lag(0.1)) }).add;
+	// ---- AMBISONIC versions (2026-10-01, Jon): the stereo placement expanded to the circle. Used for NEW events while
+	// ~wlAmbi is true and dev/ambi.scd's ~ambiBus exists. pos -1..1 -> azimuth pos * pi (+ = left; -1 and +1 = behind),
+	// so a uniform pos is uniform round the circle. Everything goes to ~wlAmbiBus (B-format) -> \wlMasterA -> ~ambiBus.
+	SynthDef(\wlDyadA, { |gate = 1, rel = 4, buf, dur = 30, apex = 0.5, gain = 1, pos = 0, width = 0.5, amp = 1, out = 0|
+		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), doneAction: 2);
+		var env = EnvGen.kr(Env([0, 1, 0], [apex * dur, (1 - apex) * dur], \sin), doneAction: 2);
+		var cut = EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2);
+		var az = pos * pi, half = width.clip(0, 1) * (pi / 3);   // the stem's L / R spread over an arc: width 0.3-0.9 -> 36-108 deg
+		sig = sig * env * cut * gain * amp;
+		Out.ar(out, FoaPanB.ar(sig[0], az + half, 0) + FoaPanB.ar(sig[1], az - half, 0));
+	}).add;
+	SynthDef(\wlVoiceA, { |gate = 1, rel = 4, buf, start = 0, dur = 10, fade = 0.3, gain = 1, pos = 0, amp = 1, out = 0, send = 0, sendAmt = 0|
+		var sig = PlayBuf.ar(1, buf, BufRateScale.kr(buf), 1, start, 0);
+		var env = EnvGen.kr(Env.linen(fade, (dur - (2 * fade)).max(0.05), fade, 1, \sine), doneAction: 2);
+		sig = BHiPass.ar(BHiPass.ar(sig, 80), 80);
+		sig = BLowShelf.ar(sig, 200, 0.707, -4); sig = BHiShelf.ar(sig, 7000, 0.707, -5);
+		sig = sig * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp;
+		Out.ar(out, FoaPanB.ar(sig, pos * pi, 0)); Out.ar(send, (sig * sendAmt.lag(0.2)) ! 2);
+	}).add;
+	// chords: VERY wide -- each channel as three slightly delayed copies spread over its half of the circle (L: +30/+90/+150 deg,
+	// R: -30/-90/-150), so the chord surrounds rather than sitting at two points
+	SynthDef(\wlChordA, { |gate = 1, rel = 4, buf, start = 0, dur = 300, fadeIn = 45, fadeOut = 45, gain = 1, amp = 1, out = 0, send = 0, sendAmt = 0|
+		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0);
+		var env = EnvGen.kr(Env.linen(fadeIn, (dur - fadeIn - fadeOut).max(1), fadeOut, 1, \sine), doneAction: 2);
+		var dl = [0, 0.0113, 0.0237], b;
+		sig = sig * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp;
+		b = [30, 90, 150].collect { |deg, k| FoaPanB.ar(DelayN.ar(sig[0], 0.03, dl[k]), deg.degrad, 0) * 0.5774 }.sum
+			+ [-30, -90, -150].collect { |deg, k| FoaPanB.ar(DelayN.ar(sig[1], 0.03, dl[2 - k]), deg.degrad, 0) * 0.5774 }.sum;
+		Out.ar(out, b); Out.ar(send, sig * sendAmt.lag(0.2));
+	}).add;
+	// the room for AMBI events: same IR, its L / R placed at +-90 deg (subtle by default; voices 0, chords -20 dB)
+	SynthDef(\wlRoomA, { |send, specL, specR, out = 0|
+		var sIn = In.ar(send, 2);
+		Out.ar(out, FoaPanB.ar(PartConv.ar(sIn[0], fftSize, specL), 0.5pi, 0) + FoaPanB.ar(PartConv.ar(sIn[1], fftSize, specR), -0.5pi, 0));
+	}).add;
+	SynthDef(\wlMasterA, { |in = 0, out = 0, master = 0.7| Out.ar(out, In.ar(in, 4) * master.lag(0.1)) }).add;
 	SynthDef(\wlRoom, { |dry, send, specL, specR, wet = 0.4, out = 0|
 		var d = In.ar(dry, 2), sIn = In.ar(send, 2);
 		var w = [PartConv.ar(sIn[0], fftSize, specL), PartConv.ar(sIn[1], fftSize, specR)];
@@ -95,6 +137,14 @@ s.waitForBoot {
 	SynthDef(\wlLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add; s.sync;
 	~wlMasterSyn = Synth.after(~wlRoom, \wlMaster, [\in, ~wlMixBus, \out, ~wlOutBus, \master, ~wlP.master]);
 	~wlLimiter !? { ~wlLimiter.free }; ~wlLimiter = Synth.after(~wlMasterSyn, \wlLimit, [\out, ~wlOutBus]);   // safety net
+	// AMBI path: built when the first ambi event fires (dev/ambi.scd loads after this patch)
+	~wlAmbi = ~wlAmbi ? false; ~wlRoomDb = ~wlRoomDb ? [-inf, -inf, -20];   // per layer: dyads, voices, chords (dB; -inf = none)
+	~wlAmbiBus = Bus.audio(s, 4); ~wlSendA = Bus.audio(s, 2); ~wlMasterA = nil; ~wlRoomA = nil;
+	~wlAmbiOn = { (~wlAmbi == true) and: { ~ambiBus.notNil } };
+	~wlEnsureAmbi = { if (~wlMasterA.isNil) {
+		~wlRoomA = Synth.after(~wlMasterSyn, \wlRoomA, [\send, ~wlSendA, \specL, irSpec[0][1], \specR, irSpec[1][1], \out, ~wlAmbiBus]);
+		~wlMasterA = Synth.after(~wlRoomA, \wlMasterA, [\in, ~wlAmbiBus, \out, ~ambiBus.index, \master, ~wlP.master]) } };
+	~wlRoomAmt = { |l| var db = ~wlRoomDb[l]; if (db <= -60) { 0 } { db.dbamp } };
 
 	// ---- the engine: committed counts vs targets ----
 	~wlEvents = [List.new, List.new, List.new];       // per layer: (end:, commit:, src:)
@@ -113,7 +163,9 @@ s.waitForBoot {
 			var w = ~wlDyadBufs.size.collect { |k| var age = if (~wlDyadFired[k].isNil) { 24 } { (~wlCount - ~wlDyadFired[k]).clip(1, 24) }; age.squared };
 			var k = (0..(~wlDyadBufs.size - 1)).wchoose(w.normalizeSum), d = assets["dyads"][k], dur = d["dur"].asFloat;
 			var gainDb = rrand(dyadGain[0], dyadGain[1]) + d["gain_db"].asFloat, pos = 1.0.rand2, width = rrand(0.3, 0.9), apex = 0.5.gauss(0.125).clip(0.25, 0.75);
-			~wlLastSyn = Synth(\wlDyad, [\buf, ~wlDyadBufs[k], \dur, dur, \apex, apex, \gain, gainDb.dbamp, \pos, pos, \width, width, \amp, ~wlLayerAmp.(0), \out, ~wlMixBus], ~wlGroup);
+			~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
+				Synth(\wlDyadA, [\buf, ~wlDyadBufs[k], \dur, dur, \apex, apex, \gain, gainDb.dbamp, \pos, pos, \width, width, \amp, ~wlLayerAmp.(0), \out, ~wlAmbiBus], ~wlGroup) } {
+				Synth(\wlDyad, [\buf, ~wlDyadBufs[k], \dur, dur, \apex, apex, \gain, gainDb.dbamp, \pos, pos, \width, width, \amp, ~wlLayerAmp.(0), \out, ~wlMixBus], ~wlGroup) };
 			~wlDyadFired[k] = ~wlCount; ~wlLog.("dyad " ++ (k + 1) ++ "  " ++ dur.round(1) ++ " s  pos " ++ pos.round(0.01));
 			(dur: dur, src: k);
 		},
@@ -124,8 +176,12 @@ s.waitForBoot {
 				var a = seg[0].asFloat, b = seg[1].asFloat, dur = b - a, sr = ~wlVoiceBufs[i].sampleRate;
 				var pos = (assets["voices"][v]["base_pan"].asFloat * 0.45 + 0.85.rand2).clip(-1, 1);
 				~wlVoicePtr[i] = ~wlVoicePtr[i] + 1;
-				~wlLastSyn = Synth(\wlVoice, [\buf, ~wlVoiceBufs[i], \start, a * sr, \dur, dur, \gain, assets["voices"][v]["gain_db"].asFloat.dbamp, \pos, pos,
-					\amp, ~wlLayerAmp.(1), \dry, ~wlDry, \send, ~wlSend], ~wlGroup);
+				~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
+					// ambi: the singer's home is spread round the full circle (base_pan * pi), +- a little
+					Synth(\wlVoiceA, [\buf, ~wlVoiceBufs[i], \start, a * sr, \dur, dur, \gain, assets["voices"][v]["gain_db"].asFloat.dbamp,
+						\pos, (assets["voices"][v]["base_pan"].asFloat + 0.15.rand2).wrap(-1, 1), \amp, ~wlLayerAmp.(1), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(1)], ~wlGroup) } {
+					Synth(\wlVoice, [\buf, ~wlVoiceBufs[i], \start, a * sr, \dur, dur, \gain, assets["voices"][v]["gain_db"].asFloat.dbamp, \pos, pos,
+					\amp, ~wlLayerAmp.(1), \dry, ~wlDry, \send, ~wlSend], ~wlGroup) };
 				~wlLog.("voice " ++ v ++ "  " ++ a.round(0.1) ++ "-" ++ b.round(0.1) ++ " s");
 				(dur: dur, src: i);
 			};
@@ -134,8 +190,11 @@ s.waitForBoot {
 			var busy = ~wlBusy.(2), cands = chordIds.size.collect { |i| i }.reject { |i| busy.includes(i) };
 			if (cands.isEmpty) { nil } {
 				var i = cands.choose, k = chordIds[i], ch = assets["chords"][k], dur = ch["dur"].asFloat, sr = ~wlChordBufs[i].sampleRate;
-				~wlLastSyn = Synth(\wlChord, [\buf, ~wlChordBufs[i], \start, ch["start_s"].asFloat * sr, \dur, dur, \fadeIn, ch["fade_in"].asFloat, \fadeOut, ch["fade_out"].asFloat,
-					\gain, ch["gain_db"].asFloat.dbamp, \pos, ch["pan"].asFloat, \width, (ch["width"].asFloat / 90).clip(0, 1), \amp, ~wlLayerAmp.(2), \out, ~wlMixBus], ~wlGroup);
+				~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
+					Synth(\wlChordA, [\buf, ~wlChordBufs[i], \start, ch["start_s"].asFloat * sr, \dur, dur, \fadeIn, ch["fade_in"].asFloat, \fadeOut, ch["fade_out"].asFloat,
+						\gain, ch["gain_db"].asFloat.dbamp, \amp, ~wlLayerAmp.(2), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(2)], ~wlGroup) } {
+					Synth(\wlChord, [\buf, ~wlChordBufs[i], \start, ch["start_s"].asFloat * sr, \dur, dur, \fadeIn, ch["fade_in"].asFloat, \fadeOut, ch["fade_out"].asFloat,
+					\gain, ch["gain_db"].asFloat.dbamp, \pos, ch["pan"].asFloat, \width, (ch["width"].asFloat / 90).clip(0, 1), \amp, ~wlLayerAmp.(2), \out, ~wlMixBus], ~wlGroup) };
 				~wlLog.("chord " ++ k ++ "  " ++ dur.round(1) ++ " s");
 				(dur: dur, src: i);
 			};
@@ -155,7 +214,9 @@ s.waitForBoot {
 	~wlTick = Routine { loop {
 		var now = ~wlNow.(), tg = ~wlTargets.();
 		3.do { |l|
-			~wlEvents[l] = ~wlEvents[l].reject { |e| e.end < now };
+			// List.newFrom: reject returns an ARRAY, whose .add below silently drops items past its capacity (4) unless the result
+			// is reassigned -- that capped the wall at 4 tracked dyads while untracked ones piled up on the server (fixed 2026-10-01)
+			~wlEvents[l] = List.newFrom(~wlEvents[l].reject { |e| e.end < now });
 			if ((now >= ~wlNextOk[l]) and: { ~wlCommitted.(l) < tg[l].round }) {
 				var ev = ~wlFire[l].value;
 				ev !? { ~wlEvents[l].add((end: now + ev.dur, commit: now + (ev.dur * (1 - rrand(tailFrac[0], tailFrac[1]))), src: ev.src, syn: ~wlLastSyn, start: now));
@@ -190,7 +251,7 @@ s.waitForBoot {
 	~wlTrims = 3.collect { |l| NumberBox().clipLo_(-24).clipHi_(12).step_(0.5).scroll_step_(0.5).decimals_(1).value_(0).fixedWidth_(56)
 		.action_({ |nb| ~wlP.trim[l] = nb.value; ~wlSetLayerAmps.() }) };
 	~wlMasterSl = Slider().orientation_(\vertical).fixedWidth_(50).minHeight_(260).value_(ControlSpec(-40, 6).unmap(~wlP.master.ampdb))
-		.action_({ |sl| ~wlP.master = if (sl.value <= 0.001) { 0 } { ControlSpec(-40, 6).map(sl.value).dbamp }; ~wlMasterSyn !? { ~wlMasterSyn.set(\master, ~wlP.master) }; ~wlDirty = true });
+		.action_({ |sl| ~wlP.master = if (sl.value <= 0.001) { 0 } { ControlSpec(-40, 6).map(sl.value).dbamp }; ~wlMasterSyn !? { ~wlMasterSyn.set(\master, ~wlP.master) }; ~wlMasterA !? { ~wlMasterA.set(\master, ~wlP.master) }; ~wlDirty = true });
 	~wlMasterText = StaticText().align_(\center).string_("");
 	~wlLast = StaticText().string_("").fixedHeight_(18);
 	~wlRelBox = NumberBox().clipLo_(0.2).clipHi_(30).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~wlP[\relTime]).fixedWidth_(56).action_({ |nb| ~wlP[\relTime] = nb.value });
@@ -232,7 +293,8 @@ s.waitForBoot {
 	MIDIdef.noteOn(\wlnote, { |vel, note| { if (note == 58 or: { note == 59 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (note == 59) { 1 } { -1 });
 		~wlMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner } }.defer }).permanent_(true);
 
-	~wlWin.onClose = { ~wlTick.stop; ~wlRout.stop; ~wlGroup.free; ~wlRoom.free; ~wlMasterSyn !? { ~wlMasterSyn.free; ~wlMasterSyn = nil }; ~wlMixBus !? { ~wlMixBus.free; ~wlMixBus = nil }; ~wlAmpBus !? { ~wlAmpBus.do(_.free); ~wlAmpBus = nil }; ~wlLimiter !? { ~wlLimiter.free; ~wlLimiter = nil }; ~wlDry.free; ~wlSend.free;
+	~wlWin.onClose = { ~wlTick.stop; ~wlRout.stop; ~wlGroup.free; ~wlRoom.free;
+		~wlMasterA !? { ~wlMasterA.free }; ~wlMasterA = nil; ~wlRoomA !? { ~wlRoomA.free }; ~wlRoomA = nil; ~wlAmbiBus !? { ~wlAmbiBus.free }; ~wlSendA !? { ~wlSendA.free }; ~wlMasterSyn !? { ~wlMasterSyn.free; ~wlMasterSyn = nil }; ~wlMixBus !? { ~wlMixBus.free; ~wlMixBus = nil }; ~wlAmpBus !? { ~wlAmpBus.do(_.free); ~wlAmpBus = nil }; ~wlLimiter !? { ~wlLimiter.free; ~wlLimiter = nil }; ~wlDry.free; ~wlSend.free;
 		MIDIdef(\wlcc).free; MIDIdef(\wlnote).free;
 		(~wlDyadBufs ++ ~wlVoiceBufs ++ ~wlChordBufs ++ [ir] ++ irSpec.collect(_[0]) ++ irSpec.collect(_[1])).do(_.free);
 		~mkOwners.remove(\wall); ~mkOwner = ~mkOwners.first };

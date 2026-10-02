@@ -26,10 +26,14 @@ irregular segments). Each voice sits on one discrete level = round(speed slider 
 and changes level AT ITS NEXT BREATH -- never mid-breath, never a blend of two speeds.
 
 nanoKONTROL2 (factory CC map, soft takeover on every fader/knob):
-  sliders 1-8  breath -> harmonium morph of a BLOCK of consecutive voices: 4 5 4 5 4 5 4 5 (= 36),
+  sliders 1-8  breath -> harmonium morph, TILED (2026-10-01): fader g = voices g, g+8, g+16, g+24, g+32
+               (faders 1-4 five voices, 5-8 four; with the voices tiled a/g/r/s, each fader is ONE performer).
+               Before 2026-10-01: a BLOCK of consecutive voices: 4 5 4 5 4 5 4 5 (= 36),
                i.e. slider 1 = voices 1-4, 2 = 5-9, 3 = 10-13, ... 8 = 32-36 (voices are tiled a/g/r/s)
   S / M        solo / mute that group      R1  re-roll speed offsets      CYCLE  link all sliders
-  knob 1 voices 0-36 | 2 speed level | 3 speed spread | 4 morph glide | 5 volume | 6 fade | 7 gap s | 8 gap nCVI
+  knobs 1-8  FORCE offset depth of fader group g (sensors 1-6 -> groups 1-6, CENTRAL -> 7, 8 none) (2026-10-01;
+             volume / gap / voices / speed / spread / glide / fade / nCVI are on screen only. Was: 1 voices, 2 speed
+             level, 3 spread, 4 glide, 5 volume, 6 fade, 7 gap, 8 nCVI)
   PLAY / STOP  voices back on at the last count / all off
 Server-side modulation per voice: ~b36SetMod.(i, busIndex, amt) adds In.kr(bus)*amt to the morph.
 API: ~b36Set.(n), ~b36SetMorph.(i, v), ~spSetLevel.(i, k), ~spSetAll.(x), ~gpSet.(secs).
@@ -47,9 +51,21 @@ before evaluating to load fewer. Select all, evaluate.
 ~b36Midi = ~b36Midi ? true;
 ~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = true;   // QUAD by default again (2026-09-30, Jon)   // quad outputs, in circle order
 ~b36N = 0; ~b36Fade = 3.0; ~b36Amp = 0.8; ~b36Comp = false; ~b36Spread = 0.9;
+~b36Hpf = ~b36Hpf ? 70;   // breath LOW CUT in Hz (24 dB/oct), new breaths pick it up; 10 = effectively off
 ~b36Glide = 0.5;    // seconds for a morph slider move to settle
 ~spP = (x: 0, spread: 0.5);
 ~gpP = (mean: 0, ncviIdx: 3, fade: 0.04);
+// FORCE per tiled fader group (2026-10-01, Jon): sensor -> every voice of its group:  morph = slider + 0.5 * knob * s, clipped 0..1
+// (knob down = nothing, up = +-half the range). s = AC (press up, release down, settles in ~1.6 s) or DC (press = up).
+// Reads force_hub.scd's buses (~fhBus), so the FORCE tab must be loaded. CENTRAL -> SPEED: speed level =
+// speed slider + 0.5 * knob * c * (levels - 1), c = ensemble activity (5-s |AC| of central) / slow level / DC / AC.
+~b36F = ~b36F ? (on: true ! 8, knob: 1 ! 8, signal: 0, sens: 1, smooth: 0.1);
+if (~b36F[\on].size < 8) { ~b36F[\on] = ~b36F[\on].extend(8, true); ~b36F[\knob] = ~b36F[\knob].extend(8, 1) };
+// PER FADER GROUP (2026-10-01, Jon): group g = voices g, g+8, g+16, ... (the tiled Korg fader); Korg knob g = its offset
+// depth. Sensor per group: 1-6 -> sensors 1-6, 7 -> CENTRAL, 8 -> none (yet).
+~b36FSensorOf = [0, 1, 2, 3, 4, 5, 6, nil];
+~b36FC = ~b36FC ? (on: false, knob: 1, signal: 0, smooth: 1);
+~b36FC[\delay] = ~b36FC[\delay] ? 0;   // seconds: the speed follows the ensemble this late (0-60)
 
 s = Server.default;
 if (s.serverRunning.not) {
@@ -76,6 +92,7 @@ s.waitForBoot {
 	~b36Win !? { ~b36Win.onClose = nil; if (~b36Win.isClosed.not) { ~b36Win.close } };
 	~b36Rout !? { ~b36Rout.stop }; ~b36Players !? { ~b36Players.do(_.stop) }; ~b36Synths !? { ~b36Synths.do(_.free) };
 	~b36Silent !? { ~b36Silent.free }; ~b36MorphBus !? { ~b36MorphBus.free }; ~b36GainBus !? { ~b36GainBus.free };
+	~b36FCRout !? { ~b36FCRout.stop }; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus !? { ~b36FCBus.free };
 	~spBufs !? { ~spBufs.flat.do { |b| b !? { b.free } } }; ~spBufs = nil; ~b36Bufs = nil; ~b36Players = nil;
 	MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 	s.sync;
@@ -113,11 +130,20 @@ s.waitForBoot {
 	~gpSeq = meta["voices"].collect { |v| ioiData["voices"][v["voice"].asInteger - 1].collect { |seq| seq.collect(_.asFloat) } };
 
 	// ---- synths: one control synth per voice (morph + gain buses), one short synth per breath ----
-	SynthDef(\b36Ctl, { |morphOut, gainOut, morph = 0, glide = 0.5, modbus, modamt = 0, on = 0, fade = 3|
-		Out.kr(morphOut, (VarLag.kr(morph, glide) + (In.kr(modbus) * modamt)).clip(0, 1));
+	// modbus/modamt: force_breath / force_layer (tab 7).  fbus/famt: this window's FORCE per fader group (independent)
+	SynthDef(\b36Ctl, { |morphOut, gainOut, morph = 0, glide = 0.5, modbus, modamt = 0, on = 0, fade = 3,
+		fbus, famt = 0, fsens = 1, fsmooth = 0.1|
+		Out.kr(morphOut, (VarLag.kr(morph, glide) + (In.kr(modbus) * modamt)
+			+ (Lag.kr((In.kr(fbus) * fsens).clip(-1, 1), fsmooth) * famt.lag(0.1))).clip(0, 1));
 		Out.kr(gainOut, VarLag.kr(on, fade, warp: \sin));
 	}).add;
-	SynthDef(\b36Seg, { |start = 0, dur = 1, fade = 0.04, morphBus, gainBus, pan = 0, amp = 0.8, comp = 1, out = 0|
+	// CENTRAL -> speed: activity = |AC of central| averaged ~5 s x3 (0..1), slow level = central DC averaged ~5 s
+	SynthDef(\b36Central, { |in, out, csig = 0, csmooth = 1|
+		var dc = In.kr(in + 6), ac = In.kr(in + 13), c = exp(-1 / (5 * ControlRate.ir));
+		var x = Select.kr(csig, [(OnePole.kr(ac.abs, c) * 3).clip(0, 1), OnePole.kr(dc, c), dc, ac]);
+		Out.kr(out, Lag.kr(x.clip(-1, 1), csmooth));   // the DELAY is applied language-side (~b36FCDelayed)
+	}).add;
+	SynthDef(\b36Seg, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, pan = 0, amp = 0.8, comp = 1, out = 0|
 		var bufs = \bufs.kr(0 ! ns);
 		var m = In.kr(morphBus) * (ns - 1);
 		// LINEAR fades: consecutive segments are the same continuous material, and linear in/out sum to exactly 1 across the overlap
@@ -126,10 +152,11 @@ s.waitForBoot {
 			var w = (1 - (m - i).abs).clip(0, 1).sqrt;      // equal-power triangle window around step i
 			PlayBuf.ar(1, bufs[i], BufRateScale.kr(bufs[i]), 1, start, 0) * w
 		}.sum;
+		sig = BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10));   // LOW CUT (2026-10-01): the breath takes carry 20-40 Hz mic air rumble (13 % of their energy below 40 Hz)
 		Out.ar(out, Pan2.ar(sig * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), pan));
 	}).add;
 	// quad: the same breath, panned around 4 speakers (azim -1..1 = the full circle, PanAz width 2 = equal-power pairs)
-	SynthDef(\b36SegQ, { |start = 0, dur = 1, fade = 0.04, morphBus, gainBus, azim = 0, amp = 0.8, comp = 1|
+	SynthDef(\b36SegQ, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, azim = 0, amp = 0.8, comp = 1|
 		var bufs = \bufs.kr(0 ! ns), outs = \outs.kr([2, 3, 4, 5]);
 		var m = In.kr(morphBus) * (ns - 1);
 		var env = EnvGen.kr(Env.linen(fade, (dur - fade).max(0.001), fade, 1, \lin), doneAction: 2);
@@ -137,7 +164,7 @@ s.waitForBoot {
 			var w = (1 - (m - i).abs).clip(0, 1).sqrt;
 			PlayBuf.ar(1, bufs[i], BufRateScale.kr(bufs[i]), 1, start, 0) * w
 		}.sum;
-		var q = PanAz.ar(4, sig * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), azim, 1, 2);
+		var q = PanAz.ar(4, BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10)) * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), azim, 1, 2);
 		4.do { |c| Out.ar(outs[c], q[c]) };
 	}).add;
 
@@ -162,6 +189,12 @@ s.waitForBoot {
 	};
 	("breath36: reading " ++ ~spBufs.flat.reject(_.isNil).size ++ " buffers ...").postln;
 	s.sync;
+	// 2026-10-01: with ~2300 buffers loading at once some /b_info replies get lost over UDP, leaving a Buffer with
+	// numFrames nil (a voice's player then crashed on its first breath at that speed). Re-query until all are known.
+	block { |done| 5.do { |round| var missing = ~spBufs.flat.reject(_.isNil).select { |b| b.numFrames.isNil };
+		if (missing.isEmpty) { done.value };
+		("breath36: " ++ missing.size ++ " buffers without size info -- re-querying (round " ++ (round + 1) ++ ")").warn;
+		missing.do { |b| b.updateInfo }; s.sync; 0.2.wait } };
 	~spAvail = ~spBufs.collect { |sets| sets.detectIndex(_.isNil) ? sets.size };
 
 	~b36Silent = Bus.control(s, 1).set(0);
@@ -176,7 +209,8 @@ s.waitForBoot {
 	s.bind {
 		~b36Synths = nv.collect { |i|
 			Synth(\b36Ctl, [\morphOut, ~b36MorphBus.index + i, \gainOut, ~b36GainBus.index + i,
-				\morph, 0, \glide, ~b36Glide, \modbus, ~b36Silent.index, \modamt, 0, \on, 0, \fade, 0]);
+				\morph, 0, \glide, ~b36Glide, \modbus, ~b36Silent.index, \modamt, 0, \on, 0, \fade, 0,
+				\fbus, ~b36Silent.index, \famt, 0]);
 		};
 	};
 
@@ -196,6 +230,41 @@ s.waitForBoot {
 	};
 	~b36SetMod = { |i, busIndex, amt = 1| ~b36Synths[i].set(\modbus, busIndex ? ~b36Silent.index, \modamt, amt) };
 	~b36ClearMod = { ~b36Synths.do(_.set(\modbus, ~b36Silent.index, \modamt, 0)) };
+	// ---- FORCE per fader group and CENTRAL -> speed ----
+	~b36FGroups = 8.collect { |g| (g, (g + 8) .. (nv - 1)).select { |i| i < nv } };   // = the tiled Korg faders
+	~b36FGroupOf = nv.collect { |i| i % 8 };
+	~b36FAmt = { |g| if (~b36FSensorOf[g].isNil) { 0 } { 0.5 * ~b36F[\knob][g] * ~b36F[\on][g].asInteger } };
+	~b36FApply = { |g| var k = ~b36FSensorOf[g];
+		~b36FGroups[g].do { |i|
+			if (~fhBus.isNil or: { k.isNil }) { ~b36Synths[i].set(\fbus, ~b36Silent.index, \famt, 0) } {
+				~b36Synths[i].set(\fbus, ~fhBus.index + (if (~b36F[\signal] == 0) { 7 } { 0 }) + k, \famt, ~b36FAmt.(g),
+					\fsens, ~b36F[\sens], \fsmooth, ~b36F[\smooth]) } } };
+	~b36FApplyAll = { if (~fhBus.isNil and: { ~b36F[\on].includes(true) }) { "breath36: FORCE needs the FORCE tab (force_hub.scd, ~fhBus)".warn };
+		8.do { |g| ~b36FApply.(g) } };
+	(s.latency + 0.1).wait;   // the voice synths were created in a timed bundle (s.bind): a plain .set sent now would arrive first
+	~b36FApplyAll.();
+	~b36FCBus = Bus.control(s, 1);
+	~b36FCStart = { ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil;
+		if (~fhBus.notNil) { ~b36FCSyn = Synth(\b36Central, [\in, ~fhBus.index, \out, ~b36FCBus.index, \csig, ~b36FC[\signal], \csmooth, ~b36FC[\smooth]], s, \addToHead) } };
+	// delay: a short history of the central signal; the speed uses the value from `delay` seconds ago
+	~b36FCHist = List.new;
+	~b36FCDelayed = { |c| var now = Main.elapsedTime, d = ~b36FC[\delay], old;
+		~b36FCHist.add([now, c]); while { ~b36FCHist.size > 2 and: { ~b36FCHist[1][0] < (now - d - 0.5) } } { ~b36FCHist.removeAt(0) };
+		if (d <= 0) { c } { old = ~b36FCHist.detect { |e| e[0] >= (now - d) }; (old ? ~b36FCHist.last)[1] } };
+	~b36FCStart.();
+	~b36FCApplied = nil;
+	~b36FCRout = Routine { loop {   // 10 x a second: each voice heads for base + offset (+ its own spread); ~spP.x stays the base
+		if (~b36FC[\on] and: { ~b36FCSyn.notNil }) {
+			var c = ~b36FCDelayed.(~b36FCBus.getSynchronous);   // shared memory (local server); async Bus.get gave stale values
+			{
+				var lmax = levelNames.size - 1, off = 0.5 * ~b36FC[\knob] * c * lmax, x = (~spP.x + off).clip(0, lmax);
+				~b36FCVal = c; ~b36FCOff = off; ~b36FCX = x;
+				if (~b36FCApplied.isNil or: { (x - ~b36FCApplied).abs > 0.01 }) {
+					~b36FCApplied = x; nv.do { |i| ~spSetLevel.(i, x + ~spOffset[i]) } } }.defer };
+		0.1.wait } }.play(SystemClock);
+	~b36FCSetOn = { |on| ~b36FC[\on] = on;
+		if (on and: { ~b36FCSyn.isNil }) { ~b36FCStart.(); if (~b36FCSyn.isNil) { "breath36: CENTRAL needs the FORCE tab (~fhBus)".warn } };
+		if (on.not) { ~b36FCApplied = nil; ~spSetAll.(~spP.x) } };
 	~spSetLevel = { |i, k| ~spLevel[i] = k.round.asInteger.clip(0, ~spAvail[i] - 1); ~b36Dirty = true };   // takes effect at the voice's next breath
 	~spSetAll = { |x| ~spP.x = x; nv.do { |i| ~spSetLevel.(i, x + ~spOffset[i]) } };
 	~spRollOffsets = { |sp, seed = 4242| ~spP.spread = sp; thisThread.randSeed = seed; ~spOffset = nv.collect { sp.rand2 }; ~spSetAll.(~spP.x) };
@@ -206,8 +275,11 @@ s.waitForBoot {
 	~b36Players = nv.collect { |i|
 		Routine {
 			loop {
-				var k = ~spLevel[i], bufs = ~spBufs[i][k], ons = ~spOnsets[i][k], b0 = bufs[0];
-				var total = b0.numFrames / b0.sampleRate, n = ons.size, idx, t0, t1, dur, fade, gap, audible;
+				var k = ~spLevel[i], bufs, ons, b0, total, n, idx, t0, t1, dur, fade, gap, audible;
+				// a speed level whose buffers have no size info yet (lost reply): play this breath at 1x, ask again
+				if (~spBufs[i][k].any { |b| b.numFrames.isNil }) { ~spBufs[i][k].do { |b| if (b.numFrames.isNil) { b.updateInfo } }; k = 0 };
+				bufs = ~spBufs[i][k]; ons = ~spOnsets[i][k]; b0 = bufs[0];
+				total = b0.numFrames / b0.sampleRate; n = ons.size;
 				if (~segIdx[i].isNil) { ~segIdx[i] = (~segPhase[i] * n).floor.asInteger; ~segN[i] = n };
 				if (~segN[i] != n) { ~segIdx[i] = (~segIdx[i] / ~segN[i] * n).round.asInteger; ~segN[i] = n };   // level changed: keep the place
 				idx = ~segIdx[i] % n;
@@ -217,14 +289,19 @@ s.waitForBoot {
 				audible = (~b36OnState[i] == 1) or: { ~offAt[i].notNil and: { (Main.elapsedTime - ~offAt[i]) < (~b36Fade + 0.5) } };
 				if (audible) {
 					s.makeBundle(s.latency, {
+						if ((~b36Ambi == true) and: { ~ambiBus.notNil }) {   // AMBI (dev/ambi.scd): encoded at its azimuth, decoded quad + binaural there
+							Synth(\b36SegA, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
+								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
+								\az, (~ambiAz !? { |a| a[i] }) ? (~b36Azim[i] * pi), \el, (~ambiEl !? { |a| a[i] }) ? 0, \out, ~ambiBus.index, \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)])
+						} {
 						if (~b36Quad and: { s.options.numOutputBusChannels > ~b36QuadOuts.maxItem }) {
-							Synth(\b36SegQ, [\bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
+							Synth(\b36SegQ, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
 								\azim, ~b36Azim[i], \outs, ~b36QuadOuts, \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)])
 						} {
-							Synth(\b36Seg, [\bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
+							Synth(\b36Seg, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\pan, ~b36Pan[i], \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)]) };
+								\pan, ~b36Pan[i], \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)]) } };
 					});
 				};
 				~gapIdx[i] = ~gapIdx[i] + 1;
@@ -273,18 +350,55 @@ s.waitForBoot {
 	};
 	~b36AllSlider = Slider().orientation_(\vertical).fixedWidth_(40).minHeight_(130).step_(0.005)
 		.value_(0).action_({ |sl| nv.do { |i| ~b36SetMorph.(i, sl.value) }; ~b36SliderSync = true; ~mkRelease !? { ~mkRelease.((0..7)) } });
+	// FORCE header above voice sliders 1-6 (toggle + offset knob, like the Korg's knob above its fader); a spacer of the
+	// same height above the rest of the top row keeps the sliders aligned
+	// FORCE strip: one column per Korg fader group, toggle + offset knob (Korg knob g), like the Korg's knob above its fader
+	~b36FToggles = Array.newClear(8); ~b36FKnobs = Array.newClear(8); ~b36FKText = Array.newClear(8);
+	~b36FCol = { |g| var src = ~b36FSensorOf[g], lab = if (src.isNil) { "no sensor" } { if (src == 6) { "CENTRAL" } { "sensor " ++ (src + 1) } };
+		~b36FToggles[g] = CheckBox().string_("on").value_(~b36F[\on][g]).action_({ |c| ~b36F[\on][g] = c.value; ~b36FApply.(g);
+			~uiLater.(("b36FK" ++ g).asSymbol, { ~b36FKText[g].string = "+-" ++ (~b36FAmt.(g) * 100).round.asInteger ++ "%" }) });
+		~b36FKnobs[g] = Knob().fixedSize_(Size(34, 34)).value_(~b36F[\knob][g]).action_({ |k| ~b36F[\knob][g] = k.value; ~b36FApply.(g);
+			~uiLater.(("b36FK" ++ g).asSymbol, { ~b36FKText[g].string = "+-" ++ (~b36FAmt.(g) * 100).round.asInteger ++ "%" }) });
+		~b36FKText[g] = StaticText().string_("+-" ++ (~b36FAmt.(g) * 100).round.asInteger ++ "%").align_(\center).fixedWidth_(110).font_(Font.default.size_(10));
+		VLayout(StaticText().string_("fader " ++ (g + 1) ++ ": " ++ lab).align_(\center).fixedWidth_(110).font_(Font.default.boldVariant),
+			StaticText().string_("v " ++ (~b36FGroups[g] + 1).join(" ")).align_(\center).fixedWidth_(110).font_(Font.default.size_(9)),
+			HLayout(nil, ~b36FToggles[g], ~b36FKnobs[g], nil), ~b36FKText[g]).spacing_(1) };
+	~b36FStrip = HLayout(*(8.collect { |g| ~b36FCol.(g) } ++ [nil]));
+	// LIVE bar beside every voice slider: the morph the voice actually has (slider + force + tab 7), read from the morph
+	// buses 4 x a second. Voices 1-6: the pale band is how far the force knob lets it go (slider +- 0.5 x knob).
+	~b36Eff = 0 ! nv;
+	~b36VMeters = nv.collect { |i| UserView().fixedWidth_(12).minHeight_(130).background_(Color.grey(0.93)).drawFunc_({ |uv|
+		var h = uv.bounds.height, w = uv.bounds.width, y = { |v| h * (1 - v.clip(0, 1)) }, e = ~b36Eff[i] ? 0, c = ~b36Morph[i] ? 0;
+		if (~b36FAmt.notNil) { var a = ~b36FAmt.(~b36FGroupOf[i]);
+			if (a > 0) { Pen.fillColor = Color(0.35, 0.55, 0.75, 0.22); Pen.fillRect(Rect(0, y.(c + a), w, y.(c - a) - y.(c + a))) } };
+		Pen.fillColor = if ((e - c).abs > 0.005) { if (e > c) { Color(0.25, 0.45, 0.75) } { Color(0.75, 0.45, 0.25) } } { Color.grey(0.55) };
+		Pen.fillRect(Rect(2, y.(e), w - 4, h - y.(e)));   // the live level
+		Pen.fillColor = Color.black; Pen.fillRect(Rect(0, y.(c) - 1, w, 2));   // tick = where the slider is
+	}) };
 	~b36Cols = nv.collect { |i|
 		~b36VText[i] = StaticText().string_("0").align_(\center).fixedWidth_(46);
 		~spLvlText[i] = StaticText().string_("1x").align_(\center).fixedWidth_(46).font_(Font.default.size_(10));
-		VLayout(
+		VLayout(*([] ++ [
 			StaticText().string_((i + 1).asString).align_(\center).fixedWidth_(46).font_(Font.default.boldVariant),
 			StaticText().string_(names[i].keep(4)).align_(\center).fixedWidth_(46),
 			StaticText().string_(~b36Notes[i]).align_(\center).fixedWidth_(46).font_(Font.default.boldVariant),
-			HLayout(nil, ~b36VSliders[i], nil).margins_(0),
+			HLayout(nil, ~b36VSliders[i], ~b36VMeters[i], nil).margins_(0).spacing_(1),
 			~b36VText[i], ~spLvlText[i]
-		).spacing_(2)
+		])).spacing_(2)
 	};
+	~b36FSig = PopUpMenu().items_(["AC (press up, release down)", "DC (press pushes up)"]).value_(~b36F[\signal]).fixedWidth_(200)
+		.action_({ |m| ~b36F[\signal] = m.value; ~b36FApplyAll.() });
+	~b36FSens = NumberBox().clipLo_(0).clipHi_(5).step_(0.1).scroll_step_(0.1).decimals_(1).value_(~b36F[\sens]).fixedWidth_(46)
+		.action_({ |b| ~b36F[\sens] = b.value; ~b36FApplyAll.() });
+	~b36FSmooth = NumberBox().clipLo_(0).clipHi_(5).step_(0.05).scroll_step_(0.05).decimals_(2).value_(~b36F[\smooth]).fixedWidth_(46)
+		.action_({ |b| ~b36F[\smooth] = b.value; ~b36FApplyAll.() });
+	~b36FCBox = CheckBox().string_("CENTRAL -> speed").value_(~b36FC[\on]).action_({ |c| ~b36FCSetOn.(c.value); c.value = ~b36FC[\on] });
+	~b36FCKnob = Knob().fixedSize_(Size(30, 30)).value_(~b36FC[\knob]).action_({ |k| ~b36FC[\knob] = k.value });
+	~b36FCMenu = PopUpMenu().items_(["ensemble activity (5 s)", "ensemble slow level", "central DC", "central AC"]).value_(~b36FC[\signal]).fixedWidth_(170)
+		.action_({ |m| ~b36FC[\signal] = m.value; ~b36FCSyn !? { ~b36FCSyn.set(\csig, m.value) } });
+	~b36FCText = StaticText().string_("").fixedWidth_(230);
 	~b36FadeBox = NumberBox().clipLo_(0).clipHi_(30).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~b36Fade).fixedWidth_(56).action_({ |nb| ~b36Fade = nb.value });
+	~b36HpfBox = NumberBox().clipLo_(10).clipHi_(300).step_(5).scroll_step_(5).decimals_(0).value_(~b36Hpf).fixedWidth_(52).action_({ |nb| ~b36Hpf = nb.value });
 	~b36GlideBox = NumberBox().clipLo_(0).clipHi_(30).step_(0.1).scroll_step_(0.1).decimals_(1).value_(~b36Glide).fixedWidth_(56).action_({ |nb| ~b36Glide = nb.value });
 	~b36AmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.05).scroll_step_(0.05).decimals_(2).value_(~b36Amp).fixedWidth_(56);
 	~b36VolText = StaticText().string_("").fixedWidth_(64).align_(\center);
@@ -305,7 +419,13 @@ s.waitForBoot {
 		HLayout(StaticText().string_("0"), nil, StaticText().string_(nv.asString ++ " voices")),
 		HLayout([VLayout(~spText, ~spSlider,
 			HLayout(*(levelNames.collect { |n| StaticText().string_(n.asString ++ "x").align_(\center) })),
-			HLayout(StaticText().string_("spread (steps 0..1.5)").fixedWidth_(130), ~spSpread, ~spRollBtn)), stretch: 3],
+			HLayout(StaticText().string_("spread (steps 0..1.5)").fixedWidth_(130), ~spSpread, ~spRollBtn),
+			HLayout(~b36FCBox, ~b36FCKnob, ~b36FCMenu, StaticText().string_("delay s"),
+			NumberBox().clipLo_(0).clipHi_(60).decimals_(1).step_(0.5).scroll_step_(0.5).value_(~b36FC[\delay]).fixedWidth_(46)
+				.action_({ |b| ~b36FC[\delay] = b.value }),
+			StaticText().string_("smooth s"), NumberBox().clipLo_(0).clipHi_(10).decimals_(1).step_(0.1).scroll_step_(0.1).value_(~b36FC[\smooth]).fixedWidth_(46)
+				.action_({ |b| ~b36FC[\smooth] = b.value; ~b36FCSyn !? { ~b36FCSyn.set(\csmooth, b.value) } }),
+				nil), HLayout(~b36FCText, nil)), stretch: 3],
 			[VLayout(~gpText, ~gpSlider, HLayout(StaticText().string_("0"), nil, StaticText().string_("12 s")),
 			HLayout(~gpNcvi, nil, StaticText().string_("seg fade ms"), ~gpFadeBox)), stretch: 2]),
 		StaticText().string_("morph per voice:  bottom = breath,  top = harmonium   (" ++ ns ++ " FlowEdit steps);  small number = speed level").fixedHeight_(18),
@@ -315,11 +435,15 @@ s.waitForBoot {
 				StaticText().string_(" "), StaticText().string_(" "),
 				HLayout(nil, ~b36AllSlider, nil).margins_(0), StaticText().string_(" "), StaticText().string_(" ")).spacing_(2),
 			nil])),
-		HLayout(StaticText().string_("fade s"), ~b36FadeBox, StaticText().string_("morph glide s"), ~b36GlideBox,
+		HLayout(StaticText().string_("fade s"), ~b36FadeBox, StaticText().string_("morph glide s"), ~b36GlideBox, StaticText().string_("low cut Hz"), ~b36HpfBox,
 			StaticText().string_("level"), ~b36AmpBox, ~b36CompBtn,
 			CheckBox().string_("QUAD -> outs " ++ (~b36QuadOuts + 1).join(" ")).value_(~b36Quad).action_({ |c| ~b36Quad = c.value }), nil,
 			StaticText().string_("tiled " ++ performers.collect(_.keep(1)).join("/") ++ "; speed levels loaded for "
 				++ ~spAvail.count(_ == levelNames.size) ++ "/" ++ nv ++ " voices")),
+		HLayout(StaticText().string_("FORCE per fader group (Korg knob g = depth; morph = slider + 0.5 x knob x signal)").font_(Font.default.boldVariant),
+			~b36FSig, StaticText().string_("sens x"), ~b36FSens, StaticText().string_("smooth s"), ~b36FSmooth, nil),
+		~b36FStrip,
+
 		~mkStatus
 	), stretch: 1],
 		VLayout(StaticText().string_("volume").align_(\center).font_(Font.default.boldVariant),
@@ -329,6 +453,7 @@ s.waitForBoot {
 	~b36Dirty = true;
 	~b36Rout = Routine { loop {
 		if (~b36SliderSync == true) { ~b36SliderSync = false; nv.do { |i| ~b36VSliders[i].value = ~b36Morph[i] } };
+		~b36MorphBus.getn(nv, { |v| ~b36Eff = v }); ~b36VMeters.do(_.refresh);   // live bars: 4 x a second, never faster
 		if (~b36Dirty) {
 			~b36Dirty = false;
 			~b36Count.string = ~b36N.asString ++ if (~b36N == 1) { " voice" } { " voices" };
@@ -339,13 +464,15 @@ s.waitForBoot {
 				~spLvlText[i].string = levelNames[~spLevel[i]].asString ++ "x";
 			};
 		};
+		~b36FCText.string = if (~b36FC[\on] and: { ~b36FCX.notNil }) {
+			"signal " ++ (~b36FCVal * 100).round.asInteger ++ "%  ->  speed " ++ levelNames[~b36FCX.round.asInteger] ++ "x  (+" ++ ~b36FCOff.round(0.1) ++ " steps)" }
+			{ "speed = the slider alone" };
 		0.25.wait;
 	} }.play(AppClock);
 
 	// ---------------- nanoKONTROL2 ----------------
-	// slider g morphs a BLOCK of consecutive voices, sizes 4 5 4 5 4 5 4 5 (Jon, 2026-09-28)
-	~mkBlockSizes = [4, 5, 4, 5, 4, 5, 4, 5];
-	~mkGroupVoices = ~mkBlockSizes.collect { |sz, g| var start = ~mkBlockSizes.keep(g).sum; (start..(start + sz - 1)).select { |i| i < nv } };
+	// slider g morphs voices g, g+8, g+16, ... (TILED, Jon 2026-10-01; was blocks of 4 5 4 5 4 5 4 5, 2026-09-28)
+	~mkGroupVoices = ~b36FGroups;   // tiled: fader g = voices g, g+8, g+16, ...
 	~mkGroup = nv.collect { |i| ~mkGroupVoices.detectIndex { |vs| vs.includes(i) } ? 0 };
 	~mkLink = false; ~mkLastN = nv;
 	~mkLast = IdentityDictionary.new; ~mkCaught = IdentityDictionary.new; ~mkHeld = IdentityDictionary.new;
@@ -384,20 +511,14 @@ s.waitForBoot {
 	// sound follows every fader message; the on-screen sliders catch up in the 4-per-second GUI tick (~b36Rout)
 	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v) }; ~b36SliderSync = true;
 		if (~mkLink) { ~mkRelease.((0..7).reject { |c| c == g }) } };   // LINKED: only the fader being moved drives
-	~mkKnob = { |k, v|
-		var lmax = levelNames.size - 1;
-		switch (k,
-			0, { if (~mkPick.(16, v, ~b36N / nv)) { ~b36Set.(v * nv); ~uiLater.(~b36Slider, { ~b36Slider.value = ~b36N / nv }) } },
-			1, { if (~mkPick.(17, v, ~spP.x / lmax)) { var x = (v * lmax).round; if (x != ~spP.x) { ~spSetAll.(x);
-					~uiLater.(~spSlider, { ~spSlider.value = x / lmax }); ~uiLater.(~spText, { ~spText.string = "speed " ++ levelNames[x.asInteger].asString ++ "x" }) } } },
-			2, { if (~mkPick.(18, v, ~spP.spread / 1.5)) { ~spRollOffsets.(v * 1.5); ~uiLater.(~spSpread, { ~spSpread.value = v }) } },
-			3, { if (~mkPick.(19, v, ~b36Glide / 5)) { ~b36Glide = v * 5; ~uiLater.(~b36GlideBox, { ~b36GlideBox.value = ~b36Glide }) } },
-			4, { if (~mkPick.(20, v, ControlSpec(-40, 6).unmap(~b36Amp.max(0.0001).ampdb))) { ~b36VolSlider.action.value(Ref(v)); ~uiLater.(~b36VolSlider, { ~b36VolSlider.value = v }) } },
-			5, { if (~mkPick.(21, v, ~b36Fade / 15)) { ~b36Fade = v * 15; ~uiLater.(~b36FadeBox, { ~b36FadeBox.value = ~b36Fade }) } },
-			6, { if (~mkPick.(22, v, (~gpP[\mean] / 12).sqrt)) { ~gpSlider.action.value(Ref(v)); ~uiLater.(~gpSlider, { ~gpSlider.value = v }) } },
-			7, { if (~mkPick.(23, v, ~gpP.ncviIdx / (gapLevels.size - 1))) { var n = (v * (gapLevels.size - 1)).round.asInteger; ~gpNcvi.action.value(Ref(n)); ~uiLater.(~gpNcvi, { ~gpNcvi.value = n }) } }
-		);
-	};
+	// KNOBS (2026-10-01, Jon): knob g = the FORCE offset depth of fader group g (0 = none, full = +-0.5). Volume, gap,
+	// voices, speed, spread, glide, fade, nCVI are on screen only (before: 1 voices, 2 speed, 3 spread, 4 glide,
+	// 5 volume, 6 fade, 7 gap, 8 nCVI).
+	~mkKnob = { |g, v|
+		if (~mkPick.(16 + g, v, ~b36F[\knob][g])) { ~b36F[\knob][g] = v; ~b36FApply.(g);
+			~uiLater.(("mkFK" ++ g).asSymbol, { ~b36FKnobs[g].value = v; ~b36FKText[g].string = "+-" ++ (~b36FAmt.(g) * 100).round.asInteger ++ "%" }) } };
+	// a knob moved on screen: its Korg knob must catch up again (soft takeover)
+	8.do { |g| ~b36FKnobs[g] !? { |kn| var act = kn.action; kn.action = { |w| act.value(w); ~mkRelease.([16 + g]) } } };
 	~mkButton = { |num|
 		var g;
 		g = ~mkCC.sBtn.indexOf(num); g !? { ~mkGroupVoices[g].do { |i| ~b36Solo[i] = ~b36Solo[i].not }; ~b36ApplyOn.() };
@@ -430,7 +551,8 @@ s.waitForBoot {
 			if (note == 58 or: { note == 59 }) { ~mkPassOwner.(if (note == 59) { 1 } { -1 }) } { if (~mkOwner == \breath36) { ~mkButton.(note) } } }.defer }).permanent_(true);
 	};
 
-	~b36Win.onClose = { ~b36Rout.stop; ~b36Players.do(_.stop); ~b36Synths.do(_.free); ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
+	~b36Win.onClose = { ~b36Rout.stop; ~b36Players.do(_.stop); ~b36Synths.do(_.free);
+		~b36FCRout.stop; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus.free; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
 		~b36Silent.free; ~b36MorphBus.free; ~b36GainBus.free;
 		MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 		~spBufs.flat.do { |b| b !? { b.free } } };

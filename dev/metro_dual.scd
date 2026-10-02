@@ -1,4 +1,18 @@
 /*
+IN-EARS = the Sennheiser BTD 700 (2026-10-01, Jon): a USB Bluetooth transmitter -- normal Bluetooth for now, Auracast ("Aura")
+broadcast to LE-Audio receivers from 2026-10-02. The Mac sees one 2-out device "BTD 700" either way, so the metronome server
+plays to it, fixed (no menu, no fallback). The SAME server also opens the Fireface's INPUTS, so the LAV MIC (XLR input 1)
+can go to the in-ears: OUTPUTS box, third column MIC -- in-ears = through SuperCollider (80 Hz low cut, dB, peak meter,
+OFF by default); speakers = routed inside TotalMix (input 1 -> the speaker pair, zero latency, via tmix / OSC).
+Preamp gain and 48 V phantom for the lav are set on the Fireface / in TotalMix (input 1).
+Latency mic -> in-ears = scsynth (~10 ms) + Bluetooth (classic ~150-200 ms; LE Audio / Auracast ~30-50 ms).
+
+OUTPUTS (2026-10-01, Jon): ONE box at the top, a 2 x 2 matrix -- rows SPEAKERS (the main server = the interface, output pair
++ delay ms) and IN-EARS (this patch's own server = the Multi-Output Device), columns CLICK and TRACK; each cell an on/off
+tick-box and a dB volume. Both destinations always play; a tick only mutes. The in-ear TRACK now also plays on the speakers:
+loaded on both servers, started with the same timestamp (+ the speaker delay), and the speaker copy is re-cued to the
+in-ear copy's position if they drift > 30 ms twice in a row (two devices = two sample clocks).
+
 metro_dual.scd (rig/dev/, 2026-09-29) -- metro.scd PLUS a second, toggleable click on the INTERFACE (the main
 server's output: Scarlett now, Fireface later). DEV COPY: metro.scd is the stable one and is unchanged.
   headphones [x]  the metro server as before (its Multi-Output device); unticking mutes it (amp 0, no reboot).
@@ -27,21 +41,30 @@ Select all, evaluate.
 */
 (
 ~msInDevice  = nil;   // no input: this patch only makes sound (avoids in/out sample-rate clashes)
-~msOutDevice = ~msOutDevice ? "Scarlett 2i2 4th Gen";   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
+// IN-EARS = ALWAYS the "Multi-Output Device" (2026-10-01, Jon): fixed here, no menu, and NEVER a fallback to another output --
+// if it is missing (no headset connected), the metronome stays silent, says so, and retries every 15 s.
+~msOutDevice = "BTD 700"; ~msForceDevice = true;   // (was "Multi-Output Device" until 2026-10-01 evening) //   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
-~msGlide = 0.5; ~msAmp = -44.dbamp; ~msVoice = 0;   // headphone click volume: -44 dB by default (Jon, 2026-09-29)
+~msGlide = 0.5; ~msAmp = -3.dbamp; ~msVoice = 0;   // IN-EAR click volume: -3 dB by default (Jon, 2026-10-01; was -44 dB)
 ~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
 ~msTargetHz = 4;    // 'target' line updates per second while you slide
 ~msCycle = 10;      // beats per cycle; beat 1 of each cycle is the high click
 ~msAccent = 1.5;    // pitch ratio of beat 1 (1.5 = a fifth up)
-~msAccentOn = true; // false = every beat sounds the same (toggle in the window)
+~msAccentOn = false; // downbeat accent OFF by default (Jon, 2026-10-01): every beat the same; toggle "downbeat: HIGH" in the window
 ~mdHpOn = ~mdHpOn ? true;            // headphone (metro server) click on
 ~mdIfOn = ~mdIfOn ? false;           // interface (main server) click off by default
 ~mdIfAmp = -44.dbamp; ~mdIfPair = ~mdIfPair ? 0; ~mdIfDelay = ~mdIfDelay ? 0;   // level x, output pair index, delay s
 // IN-EAR TRACKS: audio files in supra-organism/in_ears/ (wav / aif / flac; mono or stereo) played on THIS server,
 // i.e. to the in-ear headphones, with their own volume; independent of the click. Add files, press rescan.
 ~mdTrackDir = PathName(thisProcess.nowExecutingPath).pathOnly +/+ ".." +/+ ".." +/+ "in_ears";
-~mdTrackAmp = ~mdTrackAmp ? 0.5; ~mdTrackLoop = ~mdTrackLoop ? false; ~mdTrackIdx = ~mdTrackIdx ? 0;
+~mdTrackAmp = -3.dbamp;   // IN-EAR track volume: -3 dB by default (Jon, 2026-10-01)
+ ~mdTrackLoop = ~mdTrackLoop ? false; ~mdTrackIdx = ~mdTrackIdx ? 0;
+~mdTrkHpOn = ~mdTrkHpOn ? true;     // track -> in-ears on
+~mdMicOn = false;                    // LAV -> in-ears: OFF on every load (an open mic must never surprise anyone)
+~mdMicAmp = ~mdMicAmp ? -6.dbamp; ~mdMicIn = ~mdMicIn ? 0;   // level; input index (0 = Fireface input 1 = XLR 1)
+~mdMicIfOn = false; ~mdMicIfDb = ~mdMicIfDb ? -10;           // LAV -> speakers, inside TotalMix
+~mdTrkIfOn = ~mdTrkIfOn ? false;    // track -> speakers off by default
+~mdTrkIfAmp = ~mdTrkIfAmp ? 0.5;    // track level on the speakers
 // display rate limit (Jon: nothing on screen faster than 4x/s -- vestibular migraine): shared ~uiLater queue
 ~uiPending = ~uiPending ? IdentityDictionary.new;
 ~uiLater = { |key, fn| ~uiPending[key] = fn };
@@ -70,14 +93,16 @@ OSCdef(\mdIfBeat, { |msg, time, addr| if (addr.port == ~msServer.addr.port) { ~m
 ~msPort = ~msPort ? 57131;   // NOT 57111: macOS sharingd sits on UDP 57111 (verified 2026-09-28); 57131 boots clean
 ~msServer = Server.named[\metro] ?? { Server(\metro, NetAddr("127.0.0.1", ~msPort)) };
 ~msInDevice  !? { ~msServer.options.inDevice  = ~msInDevice };
-~msServer.options.numInputBusChannels = 0;
+// INPUT = the Fireface (for the lav on XLR 1); its CoreAudio name carries the serial, so find it by prefix
+~msMicDevice = ServerOptions.inDevices.detect { |d| d.beginsWith("Fireface") };
+~msServer.options.numInputBusChannels = if (~msMicDevice.notNil) { 2 } { 0 };
 ~msServer.options.numOutputBusChannels = ~msOutChannels ? 2;
 // macOS default input may be an interface that is not running (Waves SoundGrid),
 // and scsynth opens an input even with 0 channels -- so name a safe one
-~msServer.options.inDevice = "MacBook Pro Microphone";
+~msServer.options.inDevice = ~msMicDevice ? "MacBook Pro Microphone";
 // false (default): if the named device is not connected (e.g. the Scarlett is at home), use the system
 // output instead of retrying forever. true: hand the name to scsynth even if CoreAudio's list lacks it.
-~msForceDevice = ~msForceDevice ? false;
+~msForceDevice = true;   // fixed device: hand the name to scsynth even if CoreAudio's list lacks it (fails + retries, never falls back)
 ~msPickDevice = { |want|   // returns the device to boot on: the wanted one if present (or forced), else system default (nil)
 	if (want.notNil and: { ~msForceDevice or: { ServerOptions.outDevices.includesEqual(want) } }) { want } {
 		want !? { ("OUTPUT DEVICE '" ++ want ++ "' NOT AVAILABLE -- using system default (is it built in Audio MIDI Setup, with a connected member?)").warn }; nil } };
@@ -88,7 +113,8 @@ OSCdef(\mdIfBeat, { |msg, time, addr| if (addr.port == ~msServer.addr.port) { ~m
 // So boot by trial: force both to 44.1 k, then 48 k, then whatever each device has.
 // attempts: (sample rate, input device). scsynth needs in and out at one rate; if the mic cannot
 // agree with a Bluetooth / Multi-Output device, try with no input device at all (numInputBusChannels is 0).
-~msAttempts = [[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]];   // (rate, input): device rate first
+~msAttempts = if (~msMicDevice.notNil) { [[48000, ~msMicDevice], [nil, ~msMicDevice], [nil, nil]] } {   // Fireface in + BTD out share 48 kHz; last = no input (no mic)
+	[[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]] };   // (rate, input): device rate first
 ~msExpectQuit = false; ~msWantRunning = true; ~msReconnects = 0;
 // boot the named device. Wait for the real boot handshake (ServerBoot) instead of polling: the
 // first version polled at 7 s, found the handshake not yet done, and killed a WORKING server.
@@ -136,7 +162,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		Out.ar(out, sig ! 2);
 	}).send(~msServer);
 	// in-ear track player: reads from `start` s, loops or frees itself at the end; position reported 4x/s
-	SynthDef(\mdTrack, { |buf = 0, amp = 0.5, start = 0, loop = 0, gate = 1, out = 0|
+	~mdTrackDef = SynthDef(\mdTrack, { |buf = 0, amp = 0.5, start = 0, loop = 0, gate = 1, out = 0|
 		var frames = BufFrames.kr(buf), ph = (start * BufSampleRate.kr(buf)) + Sweep.ar(0, BufSampleRate.kr(buf));
 		var env = EnvGen.kr(Env.asr(0.01, 1, 0.08), gate, doneAction: 2);
 		var sig = BufRd.ar(2, buf, ph % frames, 1, 4);
@@ -144,9 +170,19 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		SendReply.kr(Impulse.kr(4), '/mdTrackPos', A2K.kr(ph % frames) / BufSampleRate.kr(buf));
 		SendReply.kr(ended, '/mdTrackEnd', 1); FreeSelf.kr(ended);
 		Out.ar(out, sig * env * amp.lag(0.05));
+	}); ~mdTrackDef.send(~msServer); if (Server.default.serverRunning) { ~mdTrackDef.send(Server.default) };
+	// the lav into the in-ears: input -> 80 Hz low cut -> both ears; peak reported 4x/s for the meter
+	SynthDef(\mdMic, { |in = 0, amp = 0.5, on = 0, out = 0|
+		var x = BHiPass.ar(BHiPass.ar(SoundIn.ar(in), 80), 80);
+		SendPeakRMS.kr(x, 4, 3, '/mdMicLvl');
+		Out.ar(out, (x * amp.lag(0.05) * on.lag(0.05)) ! 2);
 	}).send(~msServer);
 	~msServer.sync;
+	~mdMicSyn = if (~msServer.options.inDevice.notNil and: { ~msServer.options.numInputBusChannels > 0 } and: { ~msServer.options.inDevice.beginsWith("Fireface") }) {
+		Synth(\mdMic, [\in, ~mdMicIn, \amp, ~mdMicAmp, \on, ~mdMicOn.asInteger, \out, ~msOutBus ? 0], ~msServer, \addToTail) } { nil };
+	OSCdef(\mdMicLvl, { |m| ~mdMicPeak = m[3] }, '/mdMicLvl', ~msServer.addr);
 	~mdTrackSynth = nil; ~mdTrackBuf = nil; ~mdTrackPlaying = false; ~mdTrackPos = 0;   // a (re)boot loses buffers and nodes
+	~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
 
 	~msAccentRatio = { if (~msAccentOn) { ~msAccent } { 1 } };
 	~msToBpm  = { |v| ~msLo * ((~msHi / ~msLo) ** v.clip(0, 1)) };
@@ -186,7 +222,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~msDevList = { ["system default"] ++ (ServerOptions.outDevices ++ [~msActualDevice].reject(_.isNil)).asSet.asArray.sort };
 	~msDevMenu = PopUpMenu().items_(~msDevList.value).fixedWidth_(230)
 		.value_(~msDevList.value.detectIndex { |d| d == (~msActualDevice ? "system default") } ? 0)
-		.action_({ |m| ~msRebootTo.(if (m.value == 0) { nil } { m.item }) });
+		.action_({ |m| });   // device is fixed ("Multi-Output Device"); menu no longer shown
 	~msRescanBtn = Button().states_([["rescan"]]).fixedWidth_(70)
 		.action_({ ~msDevMenu.items = ~msDevList.value; ~msDevMenu.value = ~msDevList.value.detectIndex { |d| d == (~msActualDevice ? "system default") } ? 0 });
 	~msDevText = StaticText().string_("output: " ++ (~msActualDevice ? "system default") ++ " @ " ++ ~msServer.sampleRate.asInteger ++ " Hz   (set ~msOutDevice at the top of metro.scd; headphones must be members of that device in Audio MIDI Setup)").fixedHeight_(16);
@@ -235,7 +271,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		.action_({ |c| ~mdHpOn = c.value; ~msSynth !? { ~msSynth.set(\amp, ~msAmp * ~mdHpOn.asInteger) } });
 	~mdIfBox = CheckBox().fixedWidth_(240).string_("interface (main server)").value_(~mdIfOn).action_({ |c| ~mdIfOn = c.value });
 	~mdIfPairs = { (Server.default.options.numOutputBusChannels.max(2) div: 2).collect { |i| "out " ++ ((i * 2) + 1) ++ "-" ++ ((i * 2) + 2) } };
-	~mdIfPairMenu = PopUpMenu().items_(~mdIfPairs.value).value_(~mdIfPair).fixedWidth_(90).action_({ |m| ~mdIfPair = m.value });
+	~mdIfPairMenu = PopUpMenu().items_(~mdIfPairs.value).value_(~mdIfPair).fixedWidth_(90).action_({ |m| ~mdIfPair = m.value; ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\out, ~mdIfPair * 2) } });
 	~mdIfDelayBox = NumberBox().clipLo_(0).clipHi_(500).step_(5).scroll_step_(5).decimals_(0).value_(~mdIfDelay * 1000).fixedWidth_(56)
 		.action_({ |nb| ~mdIfDelay = nb.value / 1000 });
 	// ---- IN-EAR TRACKS ----
@@ -243,20 +279,42 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdTrackList = ~mdTrackFiles.();
 	~mdTrackLoad = { |path, then| var nch = SoundFile.openRead(path) !? { |f| var n = f.numChannels; f.close; n } ? 2;
 		~mdTrackBuf !? { ~mdTrackBuf.free }; ~mdTrackBuf = nil; ~mdTrackDur = 0;
+		~mdIfTrkBuf !? { ~mdIfTrkBuf.free }; ~mdIfTrkBuf = nil;
+		if (Server.default.serverRunning) { ~mdIfTrkBuf = Buffer.readChannel(Server.default, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }) };   // the speakers' copy
 		Buffer.readChannel(~msServer, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }, action: { |b|
-			~mdTrackBuf = b; ~mdTrackDur = b.numFrames / b.sampleRate; ~mdTrackPath = path; then !? { then.value } }) };
+			~mdTrackBuf = b; ~mdTrackDur = b.numFrames / b.sampleRate; ~mdTrackPath = path; { then !? { then.value } }.defer(0.3) }) };
 	~mdTrackStart = { var go = {
 			~mdTrackSynth !? { ~mdTrackSynth.set(\gate, 0) };
 			if (~mdTrackPos >= (~mdTrackDur - 0.3)) { ~mdTrackPos = 0 };
-			~mdTrackSynth = Synth(\mdTrack, [\buf, ~mdTrackBuf, \amp, ~mdTrackAmp, \start, ~mdTrackPos, \loop, ~mdTrackLoop.asInteger,
-				\out, ~msOutBus ? 0], ~msServer);
+			// both copies start at the same moment (timestamped bundles, 0.15 s ahead); the speakers' one ~mdIfDelay later
+			~msServer.makeBundle(0.15, { ~mdTrackSynth = Synth(\mdTrack, [\buf, ~mdTrackBuf, \amp, ~mdTrackAmp * ~mdTrkHpOn.asInteger,
+				\start, ~mdTrackPos, \loop, ~mdTrackLoop.asInteger, \out, ~msOutBus ? 0], ~msServer) });
+			~mdIfTrkStart.(~mdTrackPos, 0.15 + ~mdIfDelay);
 			~mdTrackPlaying = true; ~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 1 }) };
 		if (~mdTrackList.isEmpty) { "in-ear: no audio files in in_ears/".warn } {
 			if (~mdTrackBuf.notNil and: { ~mdTrackPath == ~mdTrackList[~mdTrackIdx] }) { go.() } { ~mdTrackLoad.(~mdTrackList[~mdTrackIdx], go) } } };
+	// the speakers' copy of the track (main server)
+	~mdIfTrkStart = { |pos, lat| var sv = Server.default;
+		~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
+		if (sv.serverRunning and: { ~mdIfTrkBuf.notNil }) {
+			sv.makeBundle(lat, { ~mdIfTrkSynth = Synth(\mdTrack, [\buf, ~mdIfTrkBuf, \amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger, \start, pos,
+				\loop, ~mdTrackLoop.asInteger, \out, ~mdIfPair * 2], sv.defaultGroup, \addToTail) }) } };
 	~mdTrackStop = { ~mdTrackSynth !? { ~mdTrackSynth.set(\gate, 0) }; ~mdTrackSynth = nil; ~mdTrackPlaying = false;
+		~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
 		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) };
-	OSCdef(\mdTrackPos, { |m| if (~mdTrackSynth.notNil and: { m[1] == ~mdTrackSynth.nodeID }) { ~mdTrackPos = m[3] } }, '/mdTrackPos', ~msServer.addr);
+	OSCdef(\mdTrackPos, { |m| if (~mdTrackSynth.notNil and: { m[1] == ~mdTrackSynth.nodeID }) { ~mdTrackPos = m[3]; ~mdTrackPosT = Main.elapsedTime } }, '/mdTrackPos', ~msServer.addr);
+	OSCdef(\mdIfTrkPos, { |m| if (~mdIfTrkSynth.notNil and: { m[1] == ~mdIfTrkSynth.nodeID }) { ~mdIfTrkPos = m[3]; ~mdIfTrkPosT = Main.elapsedTime } }, '/mdTrackPos', Server.default.addr);
+	// drift: once a second compare the two copies (each estimated to now); the speakers' copy should be ~mdIfDelay behind
+	~mdDriftN = 0; ~mdResyncs = 0;
+	~mdDriftCheck = { var now = Main.elapsedTime, hp, sp, err;
+		if (~mdTrackPlaying and: { ~mdIfTrkSynth.notNil } and: { ~mdTrackPosT.notNil } and: { ~mdIfTrkPosT.notNil }) {
+			hp = ~mdTrackPos + (now - ~mdTrackPosT); sp = ~mdIfTrkPos + (now - ~mdIfTrkPosT);
+			err = (sp - (hp - ~mdIfDelay)); ~mdDriftErr = err;
+			if ((err.abs > 0.03) and: { err.abs < ((~mdTrackDur ? 1) * 0.5) }) { ~mdDriftN = ~mdDriftN + 1 } { ~mdDriftN = 0 };
+			if (~mdDriftN >= 2) { ~mdDriftN = 0; ~mdResyncs = ~mdResyncs + 1;
+				~mdIfTrkStart.(((hp - ~mdIfDelay) + 0.15).wrap(0, ~mdTrackDur ? 1), 0.15) } } };
 	OSCdef(\mdTrackEnd, { |m| if (~mdTrackSynth.notNil and: { m[1] == ~mdTrackSynth.nodeID }) { ~mdTrackSynth = nil; ~mdTrackPlaying = false; ~mdTrackPos = 0;
+		~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
 		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) } }, '/mdTrackEnd', ~msServer.addr);
 	~mdTrackMenu = PopUpMenu().items_(if (~mdTrackList.isEmpty) { ["(no files in in_ears/)"] } { ~mdTrackList.collect { |p| PathName(p).fileNameWithoutExtension } })
 		.value_(~mdTrackIdx.clip(0, (~mdTrackList.size - 1).max(0))).minWidth_(300)
@@ -270,20 +328,55 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdTrackTime = StaticText().string_("0:00").fixedWidth_(90);
 	~mdTrackLoopBox = CheckBox().string_("loop").value_(~mdTrackLoop).action_({ |c| ~mdTrackLoop = c.value; ~mdTrackSynth !? { ~mdTrackSynth.set(\loop, c.value.asInteger) } });
 	~mdTrackVol = Slider().orientation_(\horizontal).fixedHeight_(34).value_(~mdToPos.(~mdTrackAmp))
-		.action_({ |sl| ~mdTrackAmp = ~mdToAmp.(sl.value); ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp) };
+		.action_({ |sl| ~mdTrackAmp = ~mdToAmp.(sl.value); ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp * ~mdTrkHpOn.asInteger) };
 			~uiLater.(\mdTrackDb, { ~mdTrackDbText.string = ~mdDbStr.(~mdTrackAmp) }) });
 	~mdTrackDbText = StaticText().string_(~mdDbStr.(~mdTrackAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
 	~mdTrackRout !? { ~mdTrackRout.stop };
 	~mdTrackRout = Routine { var n = 0; loop {   // 4 Hz text, position bar once a second
 		var p = ~mdTrackPos ? 0, fmt = { |t| (t / 60).floor.asInteger.asString ++ ":" ++ (t % 60).floor.asInteger.asString.padLeft(2, "0") };
 		~mdTrackTime.string = fmt.(p) ++ " / " ++ fmt.(~mdTrackDur ? 0);
-		if (~mdTrackPlaying and: { n % 4 == 0 }) { ~mdTrackPosSl.value = p / (~mdTrackDur ? 1).max(1) };
+		if (~mdTrackPlaying and: { n % 4 == 0 }) { ~mdTrackPosSl.value = p / (~mdTrackDur ? 1).max(1); ~mdDriftCheck.() };
+		~mdMicMeter !? { ~mdMicMeter.string = if (~mdMicSyn.isNil) { "no mic input" } { "mic peak " ++ if ((~mdMicPeak ? 0) < 0.00001) { "-inf" } { (~mdMicPeak.ampdb.round(1)).asString ++ " dB" } } };
+		~mdSyncText !? { ~mdSyncText.string = if (~mdTrackPlaying and: { ~mdIfTrkSynth.notNil } and: { ~mdDriftErr.notNil }) {
+			"speakers vs in-ears: " ++ (~mdDriftErr * 1000).round.asInteger ++ " ms off, re-cued " ++ ~mdResyncs ++ "x" } { "" } };
 		n = n + 1; 0.25.wait } }.play(AppClock);
+	// ---- MIC column ----
+	~mdMicBox = CheckBox().string_("mic").value_(~mdMicOn).action_({ |c| ~mdMicOn = c.value; ~mdMicSyn !? { ~mdMicSyn.set(\on, c.value.asInteger) };
+		if (c.value and: { ~mdMicSyn.isNil }) { "metro: no Fireface input on the in-ear server -- mic unavailable".warn; c.value = false; ~mdMicOn = false } });
+	~mdMicDb = StaticText().string_(~mdDbStr.(~mdMicAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
+	~mdMicVol = Slider().orientation_(\horizontal).fixedHeight_(30).value_(~mdToPos.(~mdMicAmp))
+		.action_({ |sl| ~mdMicAmp = ~mdToAmp.(sl.value); ~mdMicSyn !? { ~mdMicSyn.set(\amp, ~mdMicAmp) }; ~uiLater.(\mdMicDb, { ~mdMicDb.string = ~mdDbStr.(~mdMicAmp) }) });
+	~mdMicMeter = StaticText().string_("").fixedWidth_(110).font_(Font.default.size_(10));
+	// speakers: TotalMix routes hardware input 1 into the speaker pair's mix (no computer in the path)
+	~mdMicIfApply = { var t = "~/Documents/productivity/claude-skills/totalmix/tmix.py".standardizePath;
+		(t ++ " route in " ++ (~mdMicIn + 1) ++ " out " ++ ((~mdIfPair * 2) + 1) ++ " --db " ++ if (~mdMicIfOn) { ~mdMicIfDb } { -70 }).unixCmd({ |code| }) };
+	~mdMicIfBox = CheckBox().string_("mic").value_(~mdMicIfOn).action_({ |c| ~mdMicIfOn = c.value; ~mdMicIfApply.() });
+	~mdMicIfDbText = StaticText().string_(~mdMicIfDb.round(0.5).asString ++ " dB").fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
+	~mdMicIfVol = Slider().orientation_(\horizontal).fixedHeight_(30).value_(ControlSpec(-60, 6).unmap(~mdMicIfDb))
+		.action_({ |sl| ~mdMicIfDb = ControlSpec(-60, 6).map(sl.value).round(0.5); ~uiLater.(\mdMicIfDb, { ~mdMicIfDbText.string = ~mdMicIfDb.asString ++ " dB" });
+			if (~mdMicIfOn) { ~uiLater.(\mdMicIfApply, { ~mdMicIfApply.() }) } });   // TotalMix updated at most 4x/s while dragging
+	// ---- OUTPUTS matrix: rows SPEAKERS / IN-EARS, columns CLICK / TRACK / MIC ----
+	~mdTrkHpBox = CheckBox().string_("track").value_(~mdTrkHpOn).action_({ |c| ~mdTrkHpOn = c.value; ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp * ~mdTrkHpOn.asInteger) } });
+	~mdTrkIfBox = CheckBox().string_("track").value_(~mdTrkIfOn).action_({ |c| ~mdTrkIfOn = c.value; ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger) } });
+	~mdTrkIfDbText = StaticText().string_(~mdDbStr.(~mdTrkIfAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
+	~mdTrkIfVol = Slider().orientation_(\horizontal).fixedHeight_(30).value_(~mdToPos.(~mdTrkIfAmp))
+		.action_({ |sl| ~mdTrkIfAmp = ~mdToAmp.(sl.value); ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger) };
+			~uiLater.(\mdTrkIfDb, { ~mdTrkIfDbText.string = ~mdDbStr.(~mdTrkIfAmp) }) });
+	~mdSyncText = StaticText().string_("").fixedHeight_(16).font_(Font.default.size_(11));
+	~mdHpBox.string_("click").fixedWidth_(70); ~mdIfBox.string_("click").fixedWidth_(70);
+	~mdHpVol.fixedHeight_(30); ~mdIfVol.fixedHeight_(30); ~mdTrackVol.fixedHeight_(30);
+	~mdOutBox = VLayout(
+		StaticText().string_("OUTPUTS -- both always play; untick to mute.   MIC = the lav on Fireface XLR 1 (in-ears: via SuperCollider; speakers: inside TotalMix)").font_(Font.default.size_(14).boldVariant),
+		HLayout(VLayout(StaticText().string_("SPEAKERS").font_(Font.default.boldVariant), HLayout(~mdIfPairMenu, StaticText().string_("delay ms"), ~mdIfDelayBox)).spacing_(2),
+			[HLayout(~mdIfBox, ~mdIfVol, ~mdIfDbText), stretch: 1], [HLayout(~mdTrkIfBox, ~mdTrkIfVol, ~mdTrkIfDbText), stretch: 1],
+			[HLayout(~mdMicIfBox, ~mdMicIfVol, ~mdMicIfDbText), stretch: 1]),
+		HLayout(VLayout(StaticText().string_("IN-EARS").font_(Font.default.boldVariant), StaticText().string_("BTD 700 (Bluetooth / Auracast)").font_(Font.default.size_(11))).spacing_(2),
+			[HLayout(~mdHpBox, ~mdHpVol, ~mdHpDbText), stretch: 1], [HLayout(~mdTrkHpBox, ~mdTrackVol, ~mdTrackDbText), stretch: 1],
+			[HLayout(~mdMicBox, ~mdMicVol, ~mdMicDb, ~mdMicMeter), stretch: 1]),
+		~msDevText, ~mdSyncText).spacing_(4);
 	~msWin.layout = VLayout(
-		HLayout(StaticText().string_("output"), ~msDevMenu, ~msRescanBtn, nil), ~msDevText,
-		HLayout(~mdHpBox, StaticText().string_("VOLUME").font_(Font.default.boldVariant), ~mdHpVol, ~mdHpDbText),
-		HLayout(~mdIfBox, StaticText().string_("VOLUME").font_(Font.default.boldVariant), ~mdIfVol, ~mdIfDbText,
-			~mdIfPairMenu, StaticText().string_("delay ms"), ~mdIfDelayBox),
+		~mdOutBox,
+		View().fixedHeight_(1).background_(Color.grey(0.6)),
 		~msNow, ~msTarget, ~msBeatText,
 		~msSlider,
 		HLayout(~msRunBtn,
@@ -296,7 +389,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 			StaticText().string_("level"), ~msAmpBox, ~msVoiceMenu),
 		View().fixedHeight_(1).background_(Color.grey(0.6)),
 		HLayout(StaticText().string_("IN-EAR TRACK").font_(Font.default.boldVariant), ~mdTrackMenu, ~mdTrackRescan, ~mdTrackBtn, ~mdTrackLoopBox, nil),
-		HLayout(~mdTrackPosSl, ~mdTrackTime, StaticText().string_("VOLUME").font_(Font.default.boldVariant), ~mdTrackVol, ~mdTrackDbText)
+		HLayout(~mdTrackPosSl, ~mdTrackTime)
 	);
 	~msTargetDirty = false;
 	~msTargetRout = Routine {
@@ -308,7 +401,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 			(1 / ~msTargetHz.clip(0.25, 4)).wait;
 		};
 	}.play(AppClock);
-	~msWin.onClose = { ~msWantRunning = false; ~msTargetRout.stop; ~msStop.value; ~mdTrackStop.(); ~mdTrackRout !? { ~mdTrackRout.stop }; OSCdef(\mdTrackPos).free; OSCdef(\mdTrackEnd).free; OSCdef(\msTempo).free; OSCdef(\msBeat).free; OSCdef(\mdIfBeat).free };
+	~msWin.onClose = { ~msWantRunning = false; ~msTargetRout.stop; ~msStop.value; ~mdTrackStop.(); ~mdTrackRout !? { ~mdTrackRout.stop }; OSCdef(\mdTrackPos).free; OSCdef(\mdIfTrkPos).free; OSCdef(\mdMicLvl).free; if (~mdMicIfOn == true) { ~mdMicIfOn = false; ~mdMicIfApply.() }; OSCdef(\mdTrackEnd).free; OSCdef(\msTempo).free; OSCdef(\msBeat).free; OSCdef(\mdIfBeat).free };
 	~msSlider.focus(true);   // arrow keys nudge the slider too
 	if (~msResume == true) { ~msStart.value };   // stopped by default; only resumes after a device switch / reconnect
 	~msResume = false;

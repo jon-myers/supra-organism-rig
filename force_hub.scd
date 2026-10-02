@@ -49,6 +49,7 @@ s.waitForBoot {
 	// ---- tear down a previous evaluation (synchronously: see HANDOFF, "No more buffer numbers") ----
 	~fhWin !? { if (~fhWin.isClosed.not) { ~fhWin.onClose = nil; ~fhWin.close } };
 	~fhSrcRout !? { ~fhSrcRout.stop }; ~fhDrawRout !? { ~fhDrawRout.stop }; ~fhPlayRout !? { ~fhPlayRout.stop };
+	~fhLogFlush !? { ~fhLogFlush.() }; ~fhLogRout !? { ~fhLogRout.stop }; ~fhRawRout !? { ~fhRawRout.stop }; ~fhRawReplaying = false;
 	~fhRecFile !? { ~fhRecFile.close }; ~fhRecFile = nil;
 	[\fhAll, \fhDC, \fhAC, \fhDCflat, \fhACflat].do { |k| OSCdef(k).free }; (0..6).do { |k| OSCdef(("fhDC" ++ k).asSymbol).free; OSCdef(("fhAC" ++ k).asSymbol).free };
 	MIDIdef(\fhcc).free;
@@ -106,8 +107,30 @@ s.waitForBoot {
 	~fhSaveMap = { File.use(~fhMapPath, "w", { |f| f.write("// force_hub.scd OSC mapping (14 signals: DC 0-6 then AC 0-6), written " ++ Date.getDate.stamp ++ "\n" ++ ~fhMap.asCompileString ++ "\n") }) };
 	~fhSeen = ~fhSeen ? Dictionary.new;
 	~fhInternal = { |addr| (addr.ip == "127.0.0.1") and: { Server.all.any { |sv| sv.addr.port == addr.port } } };
+	// ---- always-on raw OSC log: rig/force_recordings/log/<YYYY-MM-DD>/<HH>.raw.osc.tsv (one file per hour, created only
+	// when messages arrive). Crash-robust: lines are buffered in memory and APPENDED + closed every 2 s, so a crash loses
+	// at most ~2 s. Columns: unix time (s), port, address, values. ~fhLogOn = false before loading to disable.
+	~fhLogOn = ~fhLogOn ? true; ~fhLogDir = ~fhLogDirOverride ? (~fhRecDir +/+ "log"); ~fhLogBuf = List.new;
+	~fhEpoch0 = Date.getDate.rawSeconds - Main.elapsedTime;
+	~fhLogFlush = { var lines = ~fhLogBuf, d, dir, path, isNew;
+		if (lines.notEmpty) { ~fhLogBuf = List.new;
+			d = Date.getDate; dir = ~fhLogDir +/+ d.format("%Y-%m-%d"); path = dir +/+ d.format("%H") ++ ".raw.osc.tsv";
+			if (File.exists(dir).not) { File.mkdir(dir) };
+			isNew = File.exists(path).not;
+			try { File.use(path, "a", { |f|
+				if (isNew) { f.write("# raw OSC as received: unix time (s)\tport\taddress\tvalues...  (force_hub.scd always-on log)\n") };
+				lines.do { |l| f.write(l) } }); ~fhLogPath = path; ~fhLogLines = (~fhLogLines ? 0) + lines.size }
+			{ |err| ("force_hub: log write failed: " ++ err.errorString).warn } } };
+	~fhLogRout = Routine { loop { 2.wait; ~fhLogFlush.() } }.play(SystemClock);
 	~fhRecv = { |msg, time, addr, port| var a = msg[0].asString, e, args = msg.drop(1), now = Main.elapsedTime;
 		if ((a[0] == $/) and: { ~fhInternal.(addr).not }) {
+			// RAW OSC recording (2026-10-01, Anna's idea): every incoming message as it arrived, for practice replays that go
+			// through whatever mapping is current (a CSV recording stores values AFTER the mapping)
+			// ALWAYS-ON LOG (2026-10-01, Jon): every external message, absolute time, appended to disk every 2 s
+			if ((~fhLogOn == true) and: { ~fhRawReplaying != true }) {
+				~fhLogBuf.add((~fhEpoch0 + now).round(0.0001).asString ++ "\t" ++ port ++ "\t" ++ a ++ "\t" ++ args.collect { |v| if (v.isNumber) { v.round(0.000001) } { v } }.join("\t") ++ "\n") };
+			if (~fhRawFile.notNil and: { ~fhRawReplaying != true }) {
+				~fhRawFile.write((now - ~fhRecT0).round(0.0001).asString ++ "\t" ++ port ++ "\t" ++ a ++ "\t" ++ args.collect { |v| if (v.isNumber) { v.round(0.000001) } { v } }.join("\t") ++ "\n") };
 			e = ~fhSeen[a];
 			if (e.isNil and: { ~fhSeen.size < 200 }) { e = (n: 0, lo: [], hi: []); ~fhSeen[a] = e };
 			e !? {
@@ -177,8 +200,28 @@ s.waitForBoot {
 		File.mkdir(~fhRecDir);
 		p = ~fhRecDir +/+ "force_" ++ Date.getDate.stamp ++ ".csv";
 		~fhRecFile = File(p, "w"); ~fhRecT0 = Main.elapsedTime; ~fhRecPath = p;
-		~fhRecFile.write("t," ++ 7.collect { |k| "dc" ++ k }.join(",") ++ "," ++ 7.collect { |k| "ac" ++ k }.join(",") ++ "\n") };
-	~fhRecStop = { ~fhRecFile !? { ~fhRecFile.close }; ~fhRecFile = nil };
+		~fhRecFile.write("t," ++ 7.collect { |k| "dc" ++ k }.join(",") ++ "," ++ 7.collect { |k| "ac" ++ k }.join(",") ++ "\n");
+		~fhRawPath = p.splitext[0] ++ "_raw.osc.tsv"; ~fhRawFile = File(~fhRawPath, "w");
+		~fhRawFile.write("# raw OSC as received: t(s)\tport\taddress\tvalues...  (force_hub.scd REC, " ++ Date.getDate.stamp ++ ")\n") };
+	~fhRecStop = { ~fhRecFile !? { ~fhRecFile.close }; ~fhRecFile = nil; ~fhRawFile !? { ~fhRawFile.close }; ~fhRawFile = nil };
+	// replay a raw OSC recording: each message SENT to this sclang on its original port at its original time, looping, so
+	// the OSC MONITOR, the mapping and the /force/... OSCdefs all see it exactly as if the hardware were sending
+	~fhRawReplaying = false;
+	~fhRawLoad = { |path| var rows = List.new;
+		File.readAllString(path).split($\n).do { |l| var f;
+			if ((l.size > 0) and: { l[0] != $# }) { f = l.split($\t);
+				if (f.size >= 3) { rows.add([f[0].asFloat, f[1].asInteger, f[2], f.drop(3).collect { |v| var x = v.asFloat; if ((x == 0) and: { v.stripWhiteSpace != "0" } and: { v.stripWhiteSpace.asFloat.isNil.not }) { x } { x } }]) } } };
+		rows };
+	~fhRawPlay = { |path| var rows = ~fhRawLoad.(path);
+		~fhRawRout !? { ~fhRawRout.stop };
+		if (rows.isEmpty) { "force_hub: empty raw recording".warn } {
+			rows.collect(_[1]).asSet.do { |pt| if (~fhPorts.includes(pt).not and: { pt != NetAddr.langPort }) { if (thisProcess.openUDPPort(pt)) { ~fhPorts = ~fhPorts.add(pt) } } };
+			~fhRawReplaying = true; ~fhRawName = PathName(path).fileName;
+			~fhRawRout = Routine { loop { var prev = 0;
+				prev = rows[0][0];
+				rows.do { |r| (r[0] - prev).clip(0, 2).wait; prev = r[0]; NetAddr("127.0.0.1", r[1]).sendMsg(r[2], *r[3]) };   // silences > 2 s shortened to 2 s
+				0.05.wait } }.play(SystemClock) } };
+	~fhRawStop = { ~fhRawRout !? { ~fhRawRout.stop }; ~fhRawRout = nil; ~fhRawReplaying = false };
 
 	~fhSetOut = { ~fhOut = NetAddr(~fhP[\outHost], ~fhP[\outPort]) }; ~fhSetOut.();
 	~fhSetSource = { |src| ~fhP[\source] = src; ~fhResetAC.(); ~fhExtLast = nil;
@@ -222,16 +265,26 @@ s.waitForBoot {
 	~fhPlayMenu = PopUpMenu().fixedWidth_(260);
 	~fhScanRecs = { ~fhRecs = (~fhRecDir +/+ "*.csv").pathMatch.sort.reverse; ~fhPlayMenu.items = if (~fhRecs.isEmpty) { ["(no recordings yet)"] } { ~fhRecs.collect { |p| PathName(p).fileName } } };
 	~fhScanRecs.();
+	~fhRawMenu = PopUpMenu().fixedWidth_(260);
+	~fhScanRaw = { ~fhRaws = ((~fhRecDir +/+ "*_raw.osc.tsv").pathMatch ++ (~fhLogDir +/+ "*/*.raw.osc.tsv").pathMatch).sort { |a, b| File.mtime(a) > File.mtime(b) };
+		~fhRawMenu.items = if (~fhRaws.isEmpty) { ["(no raw OSC recordings yet)"] } { ~fhRaws.collect { |p| if (p.contains("/log/")) { "log " ++ PathName(p).folderName ++ " " ++ PathName(p).fileName } { PathName(p).fileName } } } };
+	~fhScanRaw.();
+	~fhRawBtn = Button().states_([["replay raw OSC"], ["STOP raw replay", Color.white, Color(0.2, 0.45, 0.75)]]).fixedWidth_(130).action_({ |b|
+		if (b.value == 1) { ~fhScanRaw.(); if (~fhRaws.notEmpty) { ~fhRawPlay.(~fhRaws[~fhRawMenu.value.clip(0, ~fhRaws.size - 1)]) } { b.value = 0 } } { ~fhRawStop.() } });
 	~fhPlayBtn = Button().states_([["play file"]]).fixedWidth_(80).action_({
 		~fhScanRecs.(); if (~fhRecs.notEmpty) { ~fhPlayFile.(~fhRecs[~fhPlayMenu.value.clip(0, ~fhRecs.size - 1)]); ~fhSrcMenu.valueAction = 4 } });
 	~fhStatus = StaticText().string_("").fixedHeight_(18);
 	// ---- page 2: OSC MONITOR + MAPPING ----
 	~fhIPs = { "for i in 0 1 2 3 4 5 6 7 8 9; do ipconfig getifaddr en$i; done".unixCmdGetStdOut.split($\n).reject(_.isEmpty) };
 	~fhPorts = ~fhPorts ? [];
+	// the hardware team's port (force_map.scd: /FSDC1-7, /FSAC1-7 on 7500) is opened at load (2026-10-01), so choosing
+	// "external OSC, mapped" is the only step needed when the real sensors are sending
+	~fhHwPort = ~fhHwPort ? 7500;
+	if (~fhPorts.includes(~fhHwPort).not) { if (thisProcess.openUDPPort(~fhHwPort)) { ~fhPorts = ~fhPorts.add(~fhHwPort) } { ("force_hub: could not open UDP port " ++ ~fhHwPort).warn } };
 	~fhWhere = StaticText().font_(Font.default.size_(13).boldVariant);
 	~fhShowWhere = { ~fhWhere.string = "send OSC to  " ++ (~fhIPs.().join("  or  ") ? "?") ++ "   port " ++ ([NetAddr.langPort] ++ ~fhPorts).join(" / ") };
 	~fhShowWhere.();
-	~fhPortField = TextField().string_("9000").fixedWidth_(60);
+	~fhPortField = TextField().string_("9000").fixedWidth_(60);   // 7500 (hardware) is already open
 	~fhPortBtn = Button().states_([["also listen on port"]]).action_({ var n = ~fhPortField.string.asInteger;
 		if (n > 1024 and: { ~fhPorts.includes(n).not }) { if (thisProcess.openUDPPort(n)) { ~fhPorts = ~fhPorts.add(n) } { ("force_hub: could not open UDP port " ++ n).warn } };
 		~fhShowWhere.() });
@@ -281,6 +334,7 @@ s.waitForBoot {
 			~fhKnob.(\gap, "pause x", 0.1, 5), ~fhKnob.(\couple, "contagion", 0, 1), ~fhKnob.(\drift, "drift", 0, 3), ~fhKnob.(\noise, "noise", 0, 3), nil),
 		HLayout(StaticText().string_("sensors on:"), *(~fhOnBoxes ++ [nil])),
 		HLayout(~fhRecBtn, ~fhPlayMenu, ~fhPlayBtn, nil, ~fhSendOut, ~fhOutField),
+		HLayout(~fhRawMenu, ~fhRawBtn, ~fhLogText = StaticText().string_("").fixedHeight_(16), nil),
 		StaticText().string_("patches read: In.kr(~fhBus.index + k) = DC k,  In.kr(~fhBus.index + 7 + k) = AC k   (k 0-5 sensors, 6 central)")
 			.font_(Font.default.size_(10)).stringColor_(Color.grey(0.4)), nil).margins_(2));
 	~fhPages = StackLayout(~fhMeterPage, ~fhMonPage);
@@ -319,6 +373,7 @@ s.waitForBoot {
 				\playback, { "playback: " ++ (~fhPlayName ? "(choose a file, press play file)") })
 			++ "   |   " ++ fps.round(1) ++ " frames/s to the buses"
 			++ (~fhRecFile !? { "   |   REC " ++ PathName(~fhRecPath).fileName ++ "  " ++ (Main.elapsedTime - ~fhRecT0).round(1) ++ " s" } ? "");
+		~fhLogText !? { ~fhLogText.string = "always-on OSC log: " ++ if (~fhLogOn == true) { ((~fhLogLines ? 0).asString ++ " messages logged" ++ (~fhLogPath !? { |p| " -> log/" ++ PathName(p).folderName ++ "/" ++ PathName(p).fileName } ? " (waiting for OSC)")) } { "OFF" } ++ if (~fhRawReplaying == true) { "   |   replaying " ++ (~fhRawName ? "") ++ " (not logged)" } { "" } };
 		0.25.wait } }.play(AppClock);
 
 	// ---- nanoKONTROL2: sliders 1-6 are the sensors when this tab owns the controller (source = faders) ----
@@ -337,7 +392,7 @@ s.waitForBoot {
 	if (MIDIClient.initialized.not) { MIDIClient.init(verbose: false) }; MIDIIn.connectAll(verbose: false);
 	MIDIdef.cc(\fhcc, { |val, cc| if (~mkOwner == \force and: { cc < 6 } and: { ~fhSteady.(cc, val) }) { ~fhFader[cc] = val / 127 } }).permanent_(true);
 
-	~fhWin.onClose = { ~fhSrcRout.stop; ~fhDrawRout.stop; thisProcess.removeOSCRecvFunc(~fhRecv); ~fhPlayRout !? { ~fhPlayRout.stop }; ~fhRecStop.();
+	~fhWin.onClose = { ~fhSrcRout.stop; ~fhDrawRout.stop; ~fhLogFlush.(); ~fhLogRout.stop; ~fhRawStop.(); ~fhRecStop.(); thisProcess.removeOSCRecvFunc(~fhRecv); ~fhPlayRout !? { ~fhPlayRout.stop }; ~fhRecStop.();
 		[\fhAll, \fhDCflat, \fhACflat].do { |k| OSCdef(k).free }; 7.do { |k| OSCdef(("fhDC" ++ k).asSymbol).free; OSCdef(("fhAC" ++ k).asSymbol).free };
 		MIDIdef(\fhcc).free; ~mkOwners !? { ~mkOwners.remove(\force); ~mkOwner = ~mkOwners.first } };
 	("FORCE_HUB_READY  buses " ++ ~fhBus.index ++ ".." ++ (~fhBus.index + 13) ++ " (DC 0-6, AC 0-6)").postln;

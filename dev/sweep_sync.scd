@@ -38,11 +38,19 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 ~swRoot = ~swRootOverride ? (here +/+ ".." +/+ ".." +/+ "song_deconstruct" +/+ "sweeps");   // (dev/: two levels up)
 ~swOutBus = ~swOutBus ? 0;
 ~swP = (centre: 0, master: 0.5, variant: "_lr");
+// MASTER (2026-10-01, Jon: "master didn't seem to affect anything"): now a dB trim on EVERYTHING this tab sends to the
+// speakers -- the ladder AND the locked original (its own "level" is a trim under it). 0 dB = the levels as before
+// (ladder 0.5); -40..+12 dB, all the way down = off. The original's in-ear (headphone) copy is not affected.
+~swP[\trim] = ~swP[\trim] ? 1; ~swP.master = 0.5 * ~swP[\trim];
 ~swMaxPlanes = 128;
 ~swOrigPaths = [here +/+ ".." +/+ ".." +/+ "song_deconstruct" +/+ "in" +/+ "phantom_pain.wav",
 	here +/+ ".." +/+ ".." +/+ "concatenator-corpus" +/+ "targets" +/+ "Bill Converse 2 - Phantom Pain.wav"];
 ~ssP = ~ssP ? (on: false, dest: 0, amp: 0.8, offset: 0, lead: 0);   // dest 0 main, 1 headphones, 2 both; offset / lead in s
 ~ssBpm = 110.3575; ~ssDownbeat = 0.1343;
+// CENTRAL -> CENTRE (2026-10-01, Jon): the 7th force signal moves the plane around the fader:  centre = fader +
+// 0.5 * knob * c * (planes - 1), clipped. c = ensemble activity (|AC| of central, ~5 s) / slow level / central DC / AC,
+// DELAYED by "delay s" (the ladder follows the dancers that many seconds late), then smoothed. Needs the FORCE tab (~fhBus).
+~ssF = ~ssF ? (on: false, knob: 1, signal: 0, smooth: 1, delay: 0);
 s = Server.default;
 s.options.numBuffers = s.options.numBuffers.max(4096);
 s.waitForBoot {
@@ -54,6 +62,7 @@ s.waitForBoot {
 	~swPlanes !? { ~swPlanes.do { |p| p !? { p.tryPerform(\free); p.tryPerform(\at, \buf) !? { |b| b.free } } } };
 	~swBufs !? { ~swBufs.do(_.free) }; ~swBufs = [];
 	MIDIdef(\swcc).free; MIDIdef(\swnote).free; OSCdef(\swPos).free;
+	~ssFRout !? { ~ssFRout.stop }; ~ssFSyn !? { ~ssFSyn.free }; ~ssFSyn = nil; ~ssFBus !? { ~ssFBus.free }; ~ssFBus = nil;
 	~ssOrigSynth !? { ~ssOrigSynth.free }; ~ssOrigSynth = nil; ~swOrigBuf !? { ~swOrigBuf.free }; ~swOrigBuf = nil;
 	~ssHpSynth !? { ~ssHpSynth.free }; ~ssHpSynth = nil; ~ssHpBuf !? { ~ssHpBuf.free }; ~ssHpBuf = nil; ~ssHpServer = nil;
 	~ssPhBus !? { ~ssPhBus.free }; OSCdef(\ssHpPos).free;
@@ -82,6 +91,11 @@ s.waitForBoot {
 		Out.ar(phBus, ph * (phBus > 0));   // the playhead, for \ssOrigLocked; nothing unless a private bus is given
 		Out.ar(out, ((a * cos(f * 0.5pi)) + (b * sin(f * 0.5pi))) * amp.lag(0.05));
 	}).add;
+	SynthDef(\ssCentral, { |in, out, csig = 0, csmooth = 1|
+		var dc = In.kr(in + 6), ac = In.kr(in + 13), c = exp(-1 / (5 * ControlRate.ir));
+		var x = Select.kr(csig, [(OnePole.kr(ac.abs, c) * 3).clip(0, 1), OnePole.kr(dc, c), dc, ac]);
+		Out.kr(out, Lag.kr(x.clip(-1, 1), csmooth));   // the DELAY is applied language-side (~ssFDelayed): DelayN.kr warm-up misbehaved
+	}).add;
 	SynthDef(\swLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add;
 	s.sync;
 	~swLimiter = Synth.tail(s, \swLimit, [\out, ~swOutBus]);
@@ -98,7 +112,7 @@ s.waitForBoot {
 		if (~swOrigBuf.notNil and: { ~swSynth.notNil }) {
 			~ssOrigSynth = Synth.after(~swSynth, \ssOrigLocked, [\buf, ~swOrigBuf, \phBus, ~ssPhBus.index,
 				\ratio, ~swOrigBuf.sampleRate / (~swSR ? 44100), \offset, ~ssP[\offset] * ~swOrigBuf.sampleRate,
-				\amp, ~ssP[\amp], \on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \out, ~swOutBus]) } };
+				\amp, ~ssP[\amp] * ~swP[\trim], \on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \out, ~swOutBus]) } };
 	// headphone copy on the metronome's server
 	~ssHpState = "off"; ~ssHpPos = 0; ~ssHpT = nil; ~ssResyncs = 0; ~ssLat = 0.08;
 	~ssHpAvailable = { ~msServer.notNil and: { ~msServer.serverRunning } };
@@ -116,7 +130,7 @@ s.waitForBoot {
 	~ssSweepNow = { (~swPos ? 0) + (if (~swPlaying) { Main.elapsedTime - (~swPosT ? Main.elapsedTime) } { 0 }) };
 	// put the headphone player where the sweep will be `lat` from now (+ lead), with the sweep's run state
 	~ssHpSync = { |force = false| var sv = ~ssHpServer;
-		if (~ssHpSynth.notNil and: { sv.notNil } and: { sv.serverRunning }) {
+		if (~ssDestHp.() and: { ~ssHpSynth.notNil } and: { sv.notNil } and: { sv.serverRunning } and: { ~ssHpBuf.notNil }) {   // RME only unless headphones chosen
 			sv.makeBundle(~ssLat, { ~ssHpSynth.set(\resetPos, ((~ssSweepNow.() + ~ssLat + ~ssP[\lead]).max(0) * ~ssHpBuf.sampleRate).asInteger,
 				\t_reset, 1, \run, ~swPlaying.asInteger) }) } };
 	OSCdef(\ssHpPos, { |m| if (~ssHpSynth.notNil and: { m[1] == ~ssHpSynth.nodeID }) { ~ssHpPos = m[3]; ~ssHpRun = m[4]; ~ssHpT = Main.elapsedTime } }, '/ssHpPos');
@@ -129,7 +143,7 @@ s.waitForBoot {
 			// two checks in a row (0.25 s apart) must be off: a single report can be ~20 ms late by itself
 			~ssBad = if (~ssHpErr.abs > 0.03) { (~ssBad ? 0) + 1 } { 0 };
 			if (~ssBad >= 2) { ~ssBad = 0; ~ssResyncs = ~ssResyncs + 1; ~ssHpSync.() } } };
-	~ssApply = { ~ssOrigSynth !? { ~ssOrigSynth.set(\on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \amp, ~ssP[\amp],
+	~ssApply = { ~ssOrigSynth !? { ~ssOrigSynth.set(\on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \amp, ~ssP[\amp] * ~swP[\trim],
 			\offset, ~ssP[\offset] * ~swOrigBuf.sampleRate) };
 		if (~ssP[\on] and: { ~ssDestHp.() }) { ~ssHpSetup.() };
 		~ssHpSynth !? { if (~ssHpServer.notNil and: { ~ssHpServer.serverRunning }) {
@@ -177,11 +191,13 @@ s.waitForBoot {
 		};
 	};
 	// transport: the ladder (and with it the locked original) and the headphone copy get bundles with the SAME timestamp
+	// The sweep plays on the MAIN server (the RME) only (2026-10-01, Jon). The metronome server is touched ONLY when the
+	// original's destination includes headphones, and never in a way that can stop PLAY / STOP / seek on the RME.
 	~ssBoth = { |ladderArgs, hpPos| var sv = ~ssHpServer;
 		s.makeBundle(~ssLat, { ~swSynth !? { ~swSynth.set(*ladderArgs) } });
-		if (~ssHpSynth.notNil and: { sv.notNil } and: { sv.serverRunning }) {
-			sv.makeBundle(~ssLat, { ~ssHpSynth.set(\resetPos, ((hpPos + ~ssP[\lead]).max(0) * ~ssHpBuf.sampleRate).asInteger, \t_reset, 1,
-				\run, ~swPlaying.asInteger) }) } };
+		if (~ssDestHp.() and: { ~ssHpSynth.notNil } and: { sv.notNil } and: { sv.serverRunning } and: { ~ssHpBuf.notNil }) {
+			try { sv.makeBundle(~ssLat, { ~ssHpSynth.set(\resetPos, ((hpPos + ~ssP[\lead]).max(0) * ~ssHpBuf.sampleRate).asInteger, \t_reset, 1,
+				\run, ~swPlaying.asInteger) }) } { |e| ("sweep: headphone copy not updated (" ++ e.errorString ++ ")").warn } } };
 	~swPlay = { ~swPlaying = true; ~swPosT = Main.elapsedTime + ~ssLat; ~ssBoth.([\run, 1], ~swPos ? 0); ~uiLater.(\swPlayBtn, { ~swPlayBtn.value = 1 }) };
 	~swStop = { var p = ~ssSweepNow.(); ~swPlaying = false; ~ssBoth.([\run, 0], p); ~uiLater.(\swPlayBtn, { ~swPlayBtn.value = 0 }) };
 	~swSeek = { |secs| var x = secs.clip(0, ~swDur ? 0); ~swPos = x; ~swPosT = Main.elapsedTime + ~ssLat;
@@ -193,7 +209,28 @@ s.waitForBoot {
 			if (~swPendingSend[key].isNil) { ~swPendingSend[key] = true;
 				AppClock.sched(gap - (now - last), { ~swPendingSend[key] = nil; ~swLastSend[key] = Main.elapsedTime; fn.value; nil }) };
 			~swPendingSend[\fn ++ key] = fn } };
-	~swSetCentre = { |c| ~swP.centre = c.clip(0, (~swN - 1).max(0)); ~swSend.(\centre, ~swP.centre); ~swDirty = true };   // SOUND: every mouse move, unthrottled
+	~swSetCentre = { |c| ~swP.centre = c.clip(0, (~swN - 1).max(0));
+		~swSend.(\centre, if (~ssF[\on]) { (~swP.centre + (~ssFOff ? 0)).clip(0, (~swN - 1).max(0)) } { ~swP.centre }); ~swDirty = true };
+	// ---- CENTRAL -> centre: own central synth (started when the FORCE tab's buses exist), 20 x a second ----
+	~ssFBus = Bus.control(s, 1);
+	// delay: a short history of the central signal; the value from `delay` seconds ago (older than the history -> its oldest)
+	~ssFHist = List.new;
+	~ssFDelayed = { |c| var now = Main.elapsedTime, d = ~ssF[\delay], old;
+		~ssFHist.add([now, c]); while { ~ssFHist.size > 2 and: { ~ssFHist[1][0] < (now - d - 0.5) } } { ~ssFHist.removeAt(0) };
+		if (d <= 0) { c } { old = ~ssFHist.detect { |e| e[0] >= (now - d) }; (old ? ~ssFHist.last)[1] } };
+	~ssFStart = { ~ssFSyn !? { ~ssFSyn.free }; ~ssFSyn = nil;
+		if (~fhBus.notNil) { ~ssFSyn = Synth(\ssCentral, [\in, ~fhBus.index, \out, ~ssFBus.index, \csig, ~ssF[\signal],
+			\csmooth, ~ssF[\smooth]], s, \addToHead) } };
+	~ssFSetOn = { |on| ~ssF[\on] = on;
+		if (on and: { ~ssFSyn.isNil }) { ~ssFStart.(); if (~ssFSyn.isNil) { "sweep: CENTRAL needs the FORCE tab (~fhBus)".warn; ~ssF[\on] = false } };
+		if (~ssF[\on].not) { ~ssFOff = 0; ~swSend.(\centre, ~swP.centre) } };
+	~ssFRout = Routine { loop {
+		if (~ssF[\on] and: { ~ssFSyn.notNil } and: { ~swN > 1 }) {
+			// read straight from shared memory (local server): async Bus.get at 20 Hz delivered stale values (2026-10-01 test)
+			var c = ~ssFDelayed.(~ssFBus.getSynchronous);
+			~ssFVal = c; ~ssFOff = 0.5 * ~ssF[\knob] * c * (~swN - 1);
+			~ssFEff = (~swP.centre + ~ssFOff).clip(0, ~swN - 1); ~swSend.(\centre, ~ssFEff) };
+		0.05.wait } }.play(SystemClock);   // SOUND: every mouse move, unthrottled
 	OSCdef(\swPos, { |m| ~swPos = m[3] / (~swSR ? 44100); ~swPosT = Main.elapsedTime }, '/swPos');
 
 	// ---- GUI ----
@@ -232,8 +269,13 @@ s.waitForBoot {
 			Pen.fillColor = Color.grey(0.25); Pen.fillRect(Rect(x - 5, ty + 4, 10, h - ty - 8)) })
 		.mouseDownAction_({ |uv, x| ~swCentreSet.((x - 8) / (uv.bounds.width - 16)) })
 		.mouseMoveAction_({ |uv, x| ~swCentreSet.((x - 8) / (uv.bounds.width - 16)) });
-	~swMasterSl = Slider().orientation_(\horizontal).fixedHeight_(22).value_(~swP.master)
-		.action_({ |sl| ~swP.master = sl.value; ~swSend.(\amp, ~swP.master) });
+	~swMasterSpec = ControlSpec(-40, 12);
+	~swMasterSl = Slider().orientation_(\horizontal).fixedHeight_(22)
+		.value_(if (~swP[\trim] <= 0.0001) { 0 } { ~swMasterSpec.unmap(~swP[\trim].ampdb) })
+		.action_({ |sl| ~swP[\trim] = if (sl.value <= 0.001) { 0 } { ~swMasterSpec.map(sl.value).dbamp }; ~swP.master = 0.5 * ~swP[\trim];
+			~swSend.(\amp, ~swP.master); ~ssApply.();
+			~uiLater.(\swMasterDb, { ~swMasterDb.string = if (~swP[\trim] <= 0.0001) { "off" } { ~swP[\trim].ampdb.round(0.5).asString ++ " dB" } }) });
+	~swMasterDb = StaticText().string_(if (~swP[\trim] <= 0.0001) { "off" } { ~swP[\trim].ampdb.round(0.5).asString ++ " dB" }).fixedWidth_(60);
 	~swPlayBtn = Button().states_([["PLAY"], ["STOP", Color.white, Color.green(0.5)]]).fixedWidth_(80)
 		.action_({ |b| if (b.value == 1) { ~swPlay.value } { ~swStop.value } });
 	~swPosSl = Slider().orientation_(\horizontal).fixedHeight_(22).value_(0).action_({ |sl| ~swSeek.(sl.value * (~swDur ? 0)) });
@@ -259,7 +301,16 @@ s.waitForBoot {
 		View().fixedHeight_(1).background_(Color.grey(0.6)),
 		HLayout(StaticText().string_("set"), ~swSetMenu, ~swVarBtn, nil), ~swSetText,
 		~swCentreText, ~swCentreSl,
-		HLayout(StaticText().string_("master").fixedWidth_(60), ~swMasterSl),
+		HLayout(~ssFBox = CheckBox().string_("CENTRAL -> centre").value_(~ssF[\on]).action_({ |c| ~ssFSetOn.(c.value); c.value = ~ssF[\on] }),
+			Knob().fixedSize_(Size(30, 30)).value_(~ssF[\knob]).action_({ |k| ~ssF[\knob] = k.value }),
+			PopUpMenu().items_(["ensemble activity (5 s)", "ensemble slow level", "central DC", "central AC"]).value_(~ssF[\signal]).fixedWidth_(170)
+				.action_({ |m| ~ssF[\signal] = m.value; ~ssFSyn !? { ~ssFSyn.set(\csig, m.value) } }),
+			StaticText().string_("delay s"), NumberBox().clipLo_(0).clipHi_(60).decimals_(1).step_(0.5).scroll_step_(0.5).value_(~ssF[\delay]).fixedWidth_(46)
+				.action_({ |b| ~ssF[\delay] = b.value }),
+			StaticText().string_("smooth s"), NumberBox().clipLo_(0).clipHi_(10).decimals_(1).step_(0.1).scroll_step_(0.1).value_(~ssF[\smooth]).fixedWidth_(46)
+				.action_({ |b| ~ssF[\smooth] = b.value; ~ssFSyn !? { ~ssFSyn.set(\csmooth, b.value) } }),
+			~ssFText = StaticText().string_("").fixedWidth_(240), nil),
+		HLayout(StaticText().string_("master").fixedWidth_(60), ~swMasterSl, ~swMasterDb),
 		HLayout(~swPlayBtn, ~swPosSl, ~swPosText), ~swInfo, ~swMidiText
 	);
 	~swDirty = true;
@@ -280,6 +331,9 @@ s.waitForBoot {
 				++ (if (hp and: { ~ssP[\on] }) { "   |   headphones: " ++ (if (~ssHpAvailable.()) { ~ssHpState
 					++ (~ssHpErr !? { |e| ", off by " ++ (e * 1000).round.asInteger ++ " ms" } ? "") ++ ", resyncs " ++ ~ssResyncs } { "metronome server not running" }) } { "" }) };
 		~swTickN = (~swTickN ? 0) + 1;
+		~ssFText !? { ~ssFText.string = if (~ssF[\on] and: { ~ssFEff.notNil }) {
+			"signal " ++ ((~ssFVal ? 0) * 100).round.asInteger ++ "%  ->  plane " ++ (~ssFEff + 1).round(0.1) ++ "  (fader " ++ (~swP.centre + 1).round(0.1) ++ ")" }
+			{ "centre = the fader alone" } };
 		0.25.wait } }.play(AppClock);
 	["lowpass_full2bar", "highpass_full2bar", "highpass_full", "lowpass_full"].do { |want| var i;
 		if (~swSetName.isNil) { i = ~swSetMenu.items.detectIndex { |it| it == want }; i !? { ~swSetMenu.valueAction = i } } };
@@ -297,11 +351,11 @@ s.waitForBoot {
 		{ if ((cc == 58 or: { cc == 59 }) and: { val > 0 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (cc == 59) { 1 } { -1 }); ~swMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner };
 		  if (~mkOwner == \sweep) {
 			if (cc == 0) { if (~swPick.(cc, v, ~swCentreVal)) { ~swCentreSet.(v) } };
-			if (cc == 20) { if (~swPick.(cc, v, ~swP.master)) { ~swMasterSl.action.value(Ref(v)); ~uiLater.(~swMasterSl, { ~swMasterSl.value = v }) } };
+			if (cc == 20) { if (~swPick.(cc, v, ~swMasterSl.value)) { ~swMasterSl.action.value(Ref(v)); ~uiLater.(~swMasterSl, { ~swMasterSl.value = v }) } };
 			if (val > 0) { if (cc == 41) { ~swPlay.value }; if (cc == 42) { ~swStop.value }; if (cc == 46) { ~swVarBtn.valueAction = 1 - ~swVarBtn.value } };
 		  } }.defer }).permanent_(true);
 	MIDIdef.noteOn(\swnote, { |vel, note| { if (note == 58 or: { note == 59 }) { ~mkOwner = ~mkOwners.wrapAt(~mkOwners.indexOf(~mkOwner) + if (note == 59) { 1 } { -1 }); ~swMidiText.string = "nanoKONTROL2 owner: " ++ ~mkOwner } }.defer }).permanent_(true);
-	~swWin.onClose = { ~swRout.stop; ~ssOrigSynth !? { ~ssOrigSynth.free }; ~ssOrigSynth = nil; ~swOrigBuf !? { ~swOrigBuf.free }; ~swOrigBuf = nil;
+	~swWin.onClose = { ~swRout.stop; ~ssFRout.stop; ~ssFSyn !? { ~ssFSyn.free }; ~ssFSyn = nil; ~ssFBus !? { ~ssFBus.free }; ~ssFBus = nil; ~ssOrigSynth !? { ~ssOrigSynth.free }; ~ssOrigSynth = nil; ~swOrigBuf !? { ~swOrigBuf.free }; ~swOrigBuf = nil;
 		~ssHpSynth !? { if (~ssHpServer.notNil and: { ~ssHpServer.serverRunning }) { ~ssHpSynth.free; ~ssHpBuf !? { ~ssHpBuf.free } } }; ~ssHpSynth = nil; ~ssHpBuf = nil;
 		~ssPhBus !? { ~ssPhBus.free }; ~ssPhBus = nil; OSCdef(\ssHpPos).free; ~swSynth !? { ~swSynth.free }; ~swLimiter !? { ~swLimiter.free; ~swLimiter = nil }; ~swBufs.do(_.free); ~swBufs = [];
 		MIDIdef(\swcc).free; MIDIdef(\swnote).free; OSCdef(\swPos).free; ~mkOwners.remove(\sweep); ~mkOwner = ~mkOwners.first };
