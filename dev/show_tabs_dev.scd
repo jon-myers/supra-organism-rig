@@ -50,6 +50,7 @@ if (s.serverRunning.not) {
 	~stOutDevice = ~stOutPrefs.collect { |p| ServerOptions.outDevices.detect { |d| d.beginsWith(p) } }.reject(_.isNil).first;
 	if (~stOutDevice.isNil) { ("NONE OF " ++ ~stOutPrefs ++ " IS CONNECTED -- main output = the Mac's default").warn };
 	s.options.outDevice = ~stOutDevice;
+	s.options.sampleRate = 48000;   // pinned (2026-10-02): never inherit a rate a headset dragged the Fireface to (32 kHz broke AMBI's HRTFs)
 	("show_tabs_dev: main output = " ++ (~stOutDevice ? "system default")).postln;
 };
 
