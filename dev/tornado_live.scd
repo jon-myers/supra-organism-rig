@@ -37,7 +37,7 @@ var rfiles = ["mic-everything__X__part1000_pd0.50_t200_p10", "mic-harmonium__X__
 	"mic-whoosh__X__part1000_pd0.95_t50_p5", "mic-everything__X__part1000_pd0.50_t200_p20"];
 var tsets = ["breath", "sung", "fry", "harmonium", "mixed"];
 var t1 = so +/+ "tornado" +/+ "forann_line" +/+ "out", t0 = so +/+ "tornado" +/+ "out";   // first takes (2026-10-01 night) / first sketches
-var tv = so +/+ "tornado" +/+ "forann_line" +/+ "out_voice";
+var tv = so +/+ "tornado" +/+ "forann_line" +/+ "out_voice", ta = so +/+ "tornado" +/+ "forann_line" +/+ "out_additive";
 var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", "fry 1", "mixed 1"];
 ~fwSets = [
 	(name: "tornado, microtonal (5 sets, ambiX, 4 min)", kind: \ambix, labels: tsets, files: tsets.collect { |t| tor +/+ ("forann_mic-" ++ t ++ "_tornado_ambiX.wav") }),
@@ -49,6 +49,12 @@ var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", 
 	(name: "tornado, 8-way: microtonal 5 + first breath/sung/fry", kind: \ambix, labels: tsets ++ flabels.keep(3),
 		files: tsets.collect { |t| tor +/+ ("forann_mic-" ++ t ++ "_tornado_ambiX.wav") } ++ fsets.keep(3).collect { |t| t1 +/+ ("forann_" ++ t ++ "_tornado_ambiX.wav") }),
 	(name: "first sketches: For Ann accelerated (spin, fixed rise)", kind: \ambix, labels: ["spin", "fixed rise"], files: [t0 +/+ "tornado_spin_ambiX.wav", t0 +/+ "tornado_fixedrise_ambiX.wav"]),
+	// ADDITIVE (2026-10-02 evening, Jon: "additive, getting faster, getting louder, more and more stuff getting added in"):
+	// voice, then + breath, + fry, + harmonium, + mixed; entries 3 s -> 0.35 s apart, lines climbing up to 2.5x faster, +20 dB
+	// crescendo, 5 min, evaporating upward at the end (tornado/forann_additive.py). The stems sum to the full mix.
+	(name: "TORNADO additive (5 min, full mix)", kind: \ambix, labels: ["tornado"], files: [ta +/+ "forann_additive_ambiX.wav"]),
+	(name: "TORNADO additive by material (5 stems)", kind: \ambix, labels: ["voice", "breath", "fry", "harmonium", "mixed"],
+		files: ["voice", "breath", "fry", "harmonium", "mixed"].collect { |m| ta +/+ "stems" +/+ ("forann_additive_" ++ m ++ "_ambiX.wav") }),
 	// VOICE ONLY (2026-10-02, Jon): the 12 sung lines, every entry at its own golden-angle direction (tornado/forann_voice.py)
 	(name: "VOICE tornado (sung only, spread, 4 min)", kind: \ambix, labels: ["voice"], files: [tv +/+ "forann_voice_tornado_ambiX.wav"]),
 	(name: "VOICE rebuilt (sung only, spread, 3 min)", kind: \ambix, labels: ["voice"], files: [tv +/+ "forann_voice_rebuilt_ambiX.wav"]),

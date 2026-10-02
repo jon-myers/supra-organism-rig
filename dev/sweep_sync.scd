@@ -42,6 +42,9 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 // speakers -- the ladder AND the locked original (its own "level" is a trim under it). 0 dB = the levels as before
 // (ladder 0.5); -40..+12 dB, all the way down = off. The original's in-ear (headphone) copy is not affected.
 ~swP[\trim] = ~swP[\trim] ? 1; ~swP.master = 0.5 * ~swP[\trim];
+// FADE (2026-10-02, Jon): a multiplier on top of the master trim, glided by FADE IN / FADE OUT over `fade s` (sine-shaped,
+// 20 steps per second into amp.lag(0.05) = smooth). The master fader keeps its position; nothing on screen animates.
+~swFadeMul = 1; ~swFadeS = ~swFadeS ? 8;
 ~swMaxPlanes = 128;
 ~swOrigPaths = [here +/+ ".." +/+ ".." +/+ "song_deconstruct" +/+ "in" +/+ "phantom_pain.wav",
 	here +/+ ".." +/+ ".." +/+ "concatenator-corpus" +/+ "targets" +/+ "Bill Converse 2 - Phantom Pain.wav"];
@@ -112,7 +115,7 @@ s.waitForBoot {
 		if (~swOrigBuf.notNil and: { ~swSynth.notNil }) {
 			~ssOrigSynth = Synth.after(~swSynth, \ssOrigLocked, [\buf, ~swOrigBuf, \phBus, ~ssPhBus.index,
 				\ratio, ~swOrigBuf.sampleRate / (~swSR ? 44100), \offset, ~ssP[\offset] * ~swOrigBuf.sampleRate,
-				\amp, ~ssP[\amp] * ~swP[\trim], \on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \out, ~swOutBus]) } };
+				\amp, ~ssP[\amp] * ~swP[\trim] * ~swFadeMul, \on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \out, ~swOutBus]) } };
 	// headphone copy on the metronome's server
 	~ssHpState = "off"; ~ssHpPos = 0; ~ssHpT = nil; ~ssResyncs = 0; ~ssLat = 0.2;   // scheduling margin for play / seek bundles (0.08 gave "late" messages when the language was busy)
 	~ssHpAvailable = { ~msServer.notNil and: { ~msServer.serverRunning } };
@@ -143,11 +146,16 @@ s.waitForBoot {
 			// two checks in a row (0.25 s apart) must be off: a single report can be ~20 ms late by itself
 			~ssBad = if (~ssHpErr.abs > 0.03) { (~ssBad ? 0) + 1 } { 0 };
 			if (~ssBad >= 2) { ~ssBad = 0; ~ssResyncs = ~ssResyncs + 1; ~ssHpSync.() } } };
-	~ssApply = { ~ssOrigSynth !? { ~ssOrigSynth.set(\on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \amp, ~ssP[\amp] * ~swP[\trim],
+	~swFadeLevels = { ~swSend.(\amp, ~swP.master * ~swFadeMul); ~ssOrigSynth !? { ~ssOrigSynth.set(\amp, ~ssP[\amp] * ~swP[\trim] * ~swFadeMul) };
+		~ssHpSynth !? { if (~ssHpServer.notNil and: { ~ssHpServer.serverRunning }) { ~ssHpSynth.set(\amp, ~ssP[\amp] * ~swFadeMul) } } };
+	~swFade = { |to, secs| var from = ~swFadeMul, steps = (secs * 20).max(1).asInteger;
+		~swFadeRout !? { ~swFadeRout.stop };
+		~swFadeRout = Routine { steps.do { |i| var x = (i + 1) / steps; ~swFadeMul = from + ((to - from) * (0.5 - (0.5 * cos(x * pi)))); ~swFadeLevels.(); 0.05.wait } }.play(AppClock) };
+	~ssApply = { ~ssOrigSynth !? { ~ssOrigSynth.set(\on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \amp, ~ssP[\amp] * ~swP[\trim] * ~swFadeMul,
 			\offset, ~ssP[\offset] * ~swOrigBuf.sampleRate) };
 		if (~ssP[\on] and: { ~ssDestHp.() }) { ~ssHpSetup.() };
 		~ssHpSynth !? { if (~ssHpServer.notNil and: { ~ssHpServer.serverRunning }) {
-			~ssHpSynth.set(\on, (~ssP[\on] and: { ~ssDestHp.() }).asInteger, \amp, ~ssP[\amp]); ~ssHpSync.() } } };
+			~ssHpSynth.set(\on, (~ssP[\on] and: { ~ssDestHp.() }).asInteger, \amp, ~ssP[\amp] * ~swFadeMul); ~ssHpSync.() } } };
 
 	// sets on disk: <root>/<set>/<grain>/ with planes; plus any older layout folders that hold *.flac/*.wav
 	sets = IdentityDictionary.new;
@@ -181,7 +189,7 @@ s.waitForBoot {
 			s.sync;
 			~swFrames = ~swBufs.collect(_.numFrames).minItem; ~swSR = ~swBufs[0].sampleRate; ~swDur = ~swFrames / ~swSR;
 			~swSynth = Synth.before(~swLimiter, \ssLadder, [\bufs, ~swBufs.collect(_.bufnum) ++ (0 ! (~swMaxPlanes - ~swN)),
-				\centre, ~swP.centre.clip(0, ~swN - 1), \amp, ~swP.master, \n, ~swN, \frames, ~swFrames,
+				\centre, ~swP.centre.clip(0, ~swN - 1), \amp, ~swP.master * ~swFadeMul, \n, ~swN, \frames, ~swFrames,
 				\rate, ~swSR / s.sampleRate, \run, 0, \out, ~swOutBus, \phBus, ~ssPhBus.index]);
 			~ssMakeLocked.(); ~swPlaying = false; ~ssHpSync.();
 			{ ~swSetText.string = name.asString ++ ":  " ++ ~swN ++ " planes  " ++ ~swDur.round(0.1) ++ " s  " ++ ~swSR ++ " Hz  variant "
@@ -273,7 +281,7 @@ s.waitForBoot {
 	~swMasterSl = Slider().orientation_(\horizontal).fixedHeight_(22)
 		.value_(if (~swP[\trim] <= 0.0001) { 0 } { ~swMasterSpec.unmap(~swP[\trim].ampdb) })
 		.action_({ |sl| ~swP[\trim] = if (sl.value <= 0.001) { 0 } { ~swMasterSpec.map(sl.value).dbamp }; ~swP.master = 0.5 * ~swP[\trim];
-			~swSend.(\amp, ~swP.master); ~ssApply.();
+			~swSend.(\amp, ~swP.master * ~swFadeMul); ~ssApply.();
 			~uiLater.(\swMasterDb, { ~swMasterDb.string = if (~swP[\trim] <= 0.0001) { "off" } { ~swP[\trim].ampdb.round(0.5).asString ++ " dB" } }) });
 	~swMasterDb = StaticText().string_(if (~swP[\trim] <= 0.0001) { "off" } { ~swP[\trim].ampdb.round(0.5).asString ++ " dB" }).fixedWidth_(60);
 	~swPlayBtn = Button().states_([["PLAY"], ["STOP", Color.white, Color.green(0.5)]]).fixedWidth_(80)
@@ -310,7 +318,11 @@ s.waitForBoot {
 			StaticText().string_("smooth s"), NumberBox().clipLo_(0).clipHi_(10).decimals_(1).step_(0.1).scroll_step_(0.1).value_(~ssF[\smooth]).fixedWidth_(46)
 				.action_({ |b| ~ssF[\smooth] = b.value; ~ssFSyn !? { ~ssFSyn.set(\csmooth, b.value) } }),
 			~ssFText = StaticText().string_("").fixedWidth_(240), nil),
-		HLayout(StaticText().string_("master").fixedWidth_(60), ~swMasterSl, ~swMasterDb),
+		HLayout(StaticText().string_("master").fixedWidth_(60), ~swMasterSl, ~swMasterDb, StaticText().string_("fade s"),
+			NumberBox().clipLo_(0.1).clipHi_(120).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~swFadeS).fixedWidth_(48).action_({ |b| ~swFadeS = b.value }),
+			Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(80).action_({ ~swFade.(1, ~swFadeS); ~swFadeTxt.string = "fading in over " ++ ~swFadeS ++ " s" }),
+			Button().states_([["FADE OUT", Color.white, Color.red(0.6)]]).fixedWidth_(80).action_({ ~swFade.(0, ~swFadeS); ~swFadeTxt.string = "fading out over " ++ ~swFadeS ++ " s" }),
+			~swFadeTxt = StaticText().string_("").fixedWidth_(160)),
 		HLayout(~swPlayBtn, ~swPosSl, ~swPosText), ~swInfo, ~swMidiText
 	);
 	~swDirty = true;
