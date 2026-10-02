@@ -353,7 +353,13 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) } }, '/mdTrackEnd', ~msServer.addr);
 	~mdTrackMenu = PopUpMenu().items_(if (~mdTrackList.isEmpty) { ["(no files in in_ears/)"] } { ~mdTrackList.collect { |p| PathName(p).fileNameWithoutExtension } })
 		.value_(~mdTrackIdx.clip(0, (~mdTrackList.size - 1).max(0))).minWidth_(300)
-		.action_({ |m| ~mdTrackIdx = m.value; ~mdTrackStop.(); ~mdTrackPos = 0 });
+		.action_({ |m| ~mdTrackIdx = m.value; ~mdTrackStop.(); ~mdTrackPos = 0; ~mdTrackAutoLoop.() });
+	// a file with "loop" in its name (e.g. the Old Town Road first-4-bars loop, 2026-10-02) turns LOOP on when chosen; any other file
+	// turns it off. The loop box still overrides afterwards.
+	~mdTrackAutoLoop = { var p = ~mdTrackList[~mdTrackIdx ? 0];
+		~mdTrackLoop = p.notNil and: { PathName(p).fileName.toLower.contains("loop") };
+		~mdTrackSynth !? { ~mdTrackSynth.set(\loop, ~mdTrackLoop.asInteger) };
+		~uiLater.(\mdTrackLoop, { ~mdTrackLoopBox !? { ~mdTrackLoopBox.value = ~mdTrackLoop } }) };
 	~mdTrackRescan = Button().states_([["rescan"]]).fixedWidth_(70).action_({ ~mdTrackList = ~mdTrackFiles.();
 		~mdTrackMenu.items = if (~mdTrackList.isEmpty) { ["(no files in in_ears/)"] } { ~mdTrackList.collect { |p| PathName(p).fileNameWithoutExtension } } });
 	~mdTrackBtn = Button().states_([["▶ play track", Color.black, Color.white], ["■ stop track", Color.white, Color.green(0.45)]]).fixedWidth_(110)
@@ -361,6 +367,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdTrackPosSl = Slider().orientation_(\horizontal).fixedHeight_(24).action_({ |sl|
 		~mdTrackPos = sl.value * (~mdTrackDur ? 0); if (~mdTrackPlaying) { ~mdTrackStart.() } });
 	~mdTrackTime = StaticText().string_("0:00").fixedWidth_(90);
+	~mdTrackAutoLoop.();
 	~mdTrackLoopBox = CheckBox().string_("loop").value_(~mdTrackLoop).action_({ |c| ~mdTrackLoop = c.value; ~mdTrackSynth !? { ~mdTrackSynth.set(\loop, c.value.asInteger) } });
 	~mdTrackVol = Slider().orientation_(\horizontal).fixedHeight_(34).value_(~mdToPos.(~mdTrackAmp))
 		.action_({ |sl| ~mdTrackAmp = ~mdToAmp.(sl.value); ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp * ~mdTrkHpOn.asInteger) };

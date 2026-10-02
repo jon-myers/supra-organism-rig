@@ -35,7 +35,7 @@ s.waitForBoot { fork {
 	~soDummy4 !? { ~soDummy4.free }; ~soDummy4 = Bus.audio(s, 4);
 	~soSilent !? { ~soSilent.free }; ~soSilent = Buffer.alloc(s, 2, 1); s.sync;
 
-	SynthDef(\soStems, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, n = 20, ambi = 0, abus = 0, out = 0,
+	SynthDef(\soStems, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, mlag = 0.1, n = 20, ambi = 0, abus = 0, out = 0,
 		fbus = 0, mode = 0, src = 0, sens = 5, rise = 0.15, fall = 1.5, floor = 0, minN = 2|
 		var bufs = \bufs.kr(0 ! 20), az = \az.kr(0 ! 20), rank = \rank.kr((0..19));
 		var ph = Phasor.ar(t_reset, rate * run, 0, frames, resetPos);
@@ -50,8 +50,8 @@ s.waitForBoot { fork {
 		var st = sig.collect { |x, i| Pan2.ar(x, az[i].sin.neg) }.sum;   // az + = left (ATK), Pan2 + = right
 		var bf = sig.collect { |x, i| FoaPanB.ar(x, az[i], 0) }.sum;
 		SendReply.kr(Impulse.kr(4), '/soMeter', g ++ [A2K.kr(ph)]);
-		Out.ar(out, st * master.lag(0.1) * (1 - ambi).lag(0.05));
-		Out.ar(abus, bf * master.lag(0.1) * ambi.lag(0.05));
+		Out.ar(out, st * VarLag.kr(master, mlag, warp: \sin) * (1 - ambi).lag(0.05));
+		Out.ar(abus, bf * VarLag.kr(master, mlag, warp: \sin) * ambi.lag(0.05));
 	}).load(s);   // .load, not .add: keeps it off the metro server (see rite_live.scd, 2026-10-02)
 	s.sync;
 
@@ -110,6 +110,20 @@ s.waitForBoot { fork {
 		~soTime = StaticText().string_("0:00").fixedWidth_(50);
 		nb = { |key, lo, hi, step, dec, fn| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec)
 			.value_(~soP[key]).fixedWidth_(52).action_({ |b| ~soP[key] = b.value; fn.(b.value) }) };
+		// MASTER fader + FADE IN / FADE OUT (2026-10-02): p -> amp 2 p^2 (0.707 = 0 dB); fades glide on the server, the fader stays put
+		~soToAmp = { |p| 2 * p.squared }; ~soToPos = { |a| (a / 2).max(0).sqrt.min(1) };
+		~soDbStr = { |a| if (a < 0.0001) { "off" } { (a.ampdb.round(0.5)).asString ++ " dB" } };
+		~soFaderAmp = ~soP[\master].dbamp; ~soFadeS = ~soFadeS ? 8;
+		~soSetMaster = { |amp, lag = 0.1| ~soSyn !? { ~soSyn.set(\mlag, lag, \master, amp) } };
+		~soMasterTxt = StaticText().string_(~soDbStr.(~soFaderAmp)).fixedWidth_(64); ~soFadeTxt = StaticText().string_("").fixedWidth_(170);
+		~soFader = Slider().orientation_(\horizontal).fixedHeight_(28).value_(~soToPos.(~soFaderAmp)).action_({ |sl|
+			~soFaderAmp = ~soToAmp.(sl.value); ~soP[\master] = ~soFaderAmp.max(0.00001).ampdb; ~soSetMaster.(~soFaderAmp);
+			~uiLater.(\soMaster, { ~soMasterTxt.string = ~soDbStr.(~soFaderAmp); ~soFadeTxt.string = "" }) });
+		~soFadeNb = NumberBox().clipLo_(0.1).clipHi_(120).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~soFadeS).fixedWidth_(48).action_({ |b| ~soFadeS = b.value });
+		~soFadeIn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(80).action_({
+			~soSetMaster.(~soFaderAmp, ~soFadeS); ~soFadeTxt.string = "fading in over " ++ ~soFadeS ++ " s" });
+		~soFadeOut = Button().states_([["FADE OUT", Color.white, Color.red(0.6)]]).fixedWidth_(80).action_({
+			~soSetMaster.(0, ~soFadeS); ~soFadeTxt.string = "fading out over " ++ ~soFadeS ++ " s" });
 		~soMode = PopUpMenu().items_(["all on (= the mix)", "tiled: sensor k -> stems k, k+7, k+14", "density: motion -> how many sound"])
 			.value_(~soP[\mode]).fixedWidth_(260).action_({ |m| ~soP[\mode] = m.value; ~soSyn.set(\mode, m.value) });
 		~soSrc = PopUpMenu().items_(["AC (motion)", "DC (pressure)"]).value_(~soP[\src]).fixedWidth_(120)
@@ -127,7 +141,8 @@ s.waitForBoot { fork {
 		~soWin.layout = VLayout(
 			HLayout(StaticText().string_("take"), ~soTake, StaticText().string_("stems"), ~soSet, ~soLoadBtn, ~soInfo, nil),
 			HLayout(~soPlayBtn, ~soTop, ~soPos, ~soTime),
-			HLayout(StaticText().string_("master dB"), nb.(\master, -40, 12, 1, 0, { |v| ~soSyn.set(\master, v.dbamp) }),
+			HLayout(StaticText().string_("MASTER"), ~soFader, ~soMasterTxt, StaticText().string_("fade s"), ~soFadeNb, ~soFadeIn, ~soFadeOut, ~soFadeTxt),
+			HLayout(
 				~soAmbiBox, StaticText().string_("positions"), ~soScatter, ~soReroll, nil),
 			HLayout(StaticText().string_("motion -> level"), ~soMode, ~soSrc, StaticText().string_("sens"),
 				nb.(\sens, 0, 40, 0.5, 1, { |v| ~soSyn.set(\sens, v) }), nil),
