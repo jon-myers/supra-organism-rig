@@ -117,7 +117,7 @@ OSCdef(\mdIfBeat, { |msg, time, addr| if (addr.port == ~msServer.addr.port) { ~m
 // [nil, Fireface] attempt let CoreAudio drag it to the Multi-Output's 32 kHz (AirPods in call mode) -> main server at 32 k,
 // AMBI's binaural decoder missing. So: the Fireface (for the lav) only at its OWN current rate; otherwise boot without the mic.
 ~msMicRate = ~msMicDevice !? { |d| try { Platform.case(\osx, { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ d.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger }) } };
-if ((~msMicRate ? 0) < 8000) { ~msMicRate = 48000 };   // unreadable -> the rig's rate, never 0 (= let CoreAudio choose)
+if ((~msMicRate ? 0) < 8000) { ~msMicRate = ~stRate ? 44100 };   // unreadable -> the rig's rate, never 0 (= let CoreAudio choose)
 // ...and scsynth re-clocks its INPUT device to whatever the output can do, so the Fireface is opened ONLY when the output device
 // is already at the Fireface's rate (2026-10-02: a Multi-Output stuck at 32 kHz pulled the Fireface down under the running
 // main server). Otherwise: no input at all, lav off, with a warning saying why.

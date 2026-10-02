@@ -37,7 +37,9 @@ var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \amb
 s = Server.default;
 // sample rates (2026-10-02): before anything boots, put the default INPUT back on the MacBook mic (a headset that is the default
 // input drops into call mode at 16-32 kHz) and the Fireface + Multi-Output Device (+ members) at 48 kHz. rig/tools/audiorate.swift.
-if (File.exists("~/.local/bin/audiorate".standardizePath)) { ("tabs: audio rates\n" ++ ("~/.local/bin/audiorate rig".standardizePath).unixCmdGetStdOut).postln };
+~stRate = ~stRate ? 44100;   // THE rig's sample rate (2026-10-02: 44.1 k, not 48 k -- Bluetooth in-ears in call mode still offer 44.1 k,
+                            // so the Fireface, the Multi-Output in-ears and the lav can share one rate; the renders are 44.1 k too)
+if (File.exists("~/.local/bin/audiorate".standardizePath)) { ("tabs: audio rates\n" ++ ("~/.local/bin/audiorate rig " ++ ~stRate).standardizePath.unixCmdGetStdOut).postln };
 if (s.serverRunning.not) {
 	s.options.numBuffers = 16384; s.options.maxNodes = 8192; s.options.memSize = 2.pow(19);
 	s.options.numInputBusChannels = 0; s.options.inDevice = "MacBook Pro Microphone";
@@ -50,7 +52,7 @@ if (s.serverRunning.not) {
 	~stOutDevice = ~stOutPrefs.collect { |p| ServerOptions.outDevices.detect { |d| d.beginsWith(p) } }.reject(_.isNil).first;
 	if (~stOutDevice.isNil) { ("NONE OF " ++ ~stOutPrefs ++ " IS CONNECTED -- main output = the Mac's default").warn };
 	s.options.outDevice = ~stOutDevice;
-	s.options.sampleRate = 48000;   // pinned (2026-10-02): never inherit a rate a headset dragged the Fireface to (32 kHz broke AMBI's HRTFs)
+	s.options.sampleRate = ~stRate;   // pinned (2026-10-02): never inherit a rate a headset dragged the Fireface to (32 kHz broke AMBI's HRTFs)
 	("show_tabs_dev: main output = " ++ (~stOutDevice ? "system default")).postln;
 };
 

@@ -4,8 +4,9 @@
 //   audiorate input "<name>"           make a device the system default INPUT (e.g. "MacBook Pro Microphone": an AirPods
 //                                      pair that is the default input drops into call mode, 24 kHz in / 32 kHz out)
 //   audiorate output "<name>"          make a device the system default OUTPUT
-//   audiorate rig                      the Supra-Organism setup: default input = MacBook Pro Microphone, Fireface -> 48 k,
-//                                      Multi-Output Device -> 48 k (+ its members), then list
+//   audiorate rig [rate]               the Supra-Organism setup: default input = MacBook Pro Microphone, Fireface and
+//                                      Multi-Output Device (+ members) -> rate (default 44100), then list
+//   audiorate rates "<name>"           the rates a device offers right now
 // Build: swiftc -O audiorate.swift -o ~/.local/bin/audiorate
 import CoreAudio
 import Foundation
@@ -83,14 +84,15 @@ case "input":
 case "output":
     guard args.count == 2, let d = find(args[1], wantIn: false) else { print("no output device matches"); exit(2) }
     setDefault(kAudioHardwarePropertyDefaultOutputDevice, d, "output")
-case "rig":
+case "rig":   // audiorate rig [rate]  (default 44100, the rig's rate since 2026-10-02: Bluetooth members offer 44.1 k even in call mode)
+    let R = args.count > 1 ? (Double(args[1]) ?? 44100) : 44100
     if let m = find("MacBook Pro Microphone", wantIn: true) { setDefault(kAudioHardwarePropertyDefaultInputDevice, m, "input") }
     var ok = true
-    if let f = find("Fireface") { ok = setRate(f, 48000) && ok } else { print("Fireface: not connected"); ok = false }
+    if let f = find("Fireface") { ok = setRate(f, R) && ok } else { print("Fireface: not connected"); ok = false }
     usleep(1_500_000)   // a headset leaves call mode a moment after its mic is released
     if let mo = find("Multi-Output") {
-        for s in ids(mo, kAudioAggregateDevicePropertyActiveSubDeviceList) where rate(s) != 48000 { ok = setRate(s, 48000) && ok }
-        ok = setRate(mo, 48000) && ok
+        for s in ids(mo, kAudioAggregateDevicePropertyActiveSubDeviceList) where rate(s) != R { ok = setRate(s, R) && ok }
+        ok = setRate(mo, R) && ok
     } else { print("Multi-Output Device: not found"); ok = false }
     print(""); list(); exit(ok ? 0 : 1)
 default: print("usage: audiorate [list | set \"<name>\" <Hz> | input \"<name>\" | output \"<name>\" | rig]"); exit(2)
