@@ -116,21 +116,25 @@ OSCdef(\mdIfBeat, { |msg, time, addr| if (addr.port == ~msServer.addr.port) { ~m
 // NEVER let this server change the Fireface's rate (2026-10-02): the MAIN server runs on the Fireface, and the old
 // [nil, Fireface] attempt let CoreAudio drag it to the Multi-Output's 32 kHz (AirPods in call mode) -> main server at 32 k,
 // AMBI's binaural decoder missing. So: the Fireface (for the lav) only at its OWN current rate; otherwise boot without the mic.
-~msMicRate = ~msMicDevice !? { |d| try { Platform.case(\osx, { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ d.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger }) } };
-if ((~msMicRate ? 0) < 8000) { ~msMicRate = ~stRate ? 44100 };   // unreadable -> the rig's rate, never 0 (= let CoreAudio choose)
-// ...and scsynth re-clocks its INPUT device to whatever the output can do, so the Fireface is opened ONLY when the output device
-// is already at the Fireface's rate (2026-10-02: a Multi-Output stuck at 32 kHz pulled the Fireface down under the running
-// main server). Otherwise: no input at all, lav off, with a warning saying why.
-~msRateOf = { |dev| var r = try { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ dev.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger } ? 0; r };
-~msOutRate = if (~msActualDevice.notNil) { ~msRateOf.(~msActualDevice) } { 0 };
-// what the output OFFERS (a Multi-Output offers only what every member can do; a headset in call mode offers 16-32 k only)
-~msOutOffers = if (~msActualDevice.notNil and: { File.exists("~/.local/bin/audiorate".standardizePath) }) {
-	("~/.local/bin/audiorate rates '" ++ ~msActualDevice.split($ ).first ++ "'").standardizePath.unixCmdGetStdOut.split($ ).collect(_.asInteger).select(_ > 0) } { [~msOutRate] };
-~msMicOK = ~msMicDevice.notNil and: { ~msOutOffers.includes(~msMicRate) };
-if (~msMicDevice.notNil and: { ~msMicOK.not }) {
-	("metro: LAV OFF -- '" ++ ~msActualDevice ++ "' offers only " ++ ~msOutOffers ++ " Hz, the Fireface runs at " ++ ~msMicRate ++ " Hz; opening the Fireface would re-clock it under the main server. A headset in call mode (its mic open somewhere) runs at 16-32 kHz: close whatever uses that mic, run `audiorate rig`, reload this tab.").warn };
-~msAttempts = if (~msMicOK) { [[~msMicRate, ~msMicDevice], [nil, nil]] } {   // Fireface in only at a shared rate; else no input (no mic)
-	[[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]] };   // (rate, input): device rate first
+// ~msPlan (2026-10-02): the rate check as a function, run at load AND again when the mic box is ticked without a Fireface input
+~msPlan = {
+	~msMicRate = ~msMicDevice !? { |d| try { Platform.case(\osx, { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ d.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger }) } };
+	if ((~msMicRate ? 0) < 8000) { ~msMicRate = ~stRate ? 44100 };   // unreadable -> the rig's rate, never 0 (= let CoreAudio choose)
+	// ...and scsynth re-clocks its INPUT device to whatever the output can do, so the Fireface is opened ONLY when the output device
+	// is already at the Fireface's rate (2026-10-02: a Multi-Output stuck at 32 kHz pulled the Fireface down under the running
+	// main server). Otherwise: no input at all, lav off, with a warning saying why.
+	~msRateOf = { |dev| var r = try { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ dev.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger } ? 0; r };
+	~msOutRate = if (~msActualDevice.notNil) { ~msRateOf.(~msActualDevice) } { 0 };
+	// what the output OFFERS (a Multi-Output offers only what every member can do; a headset in call mode offers 16-32 k only)
+	~msOutOffers = if (~msActualDevice.notNil and: { File.exists("~/.local/bin/audiorate".standardizePath) }) {
+		("~/.local/bin/audiorate rates '" ++ ~msActualDevice.split($ ).first ++ "'").standardizePath.unixCmdGetStdOut.split($ ).collect(_.asInteger).select(_ > 0) } { [~msOutRate] };
+	~msMicOK = ~msMicDevice.notNil and: { ~msOutOffers.includes(~msMicRate) };
+	if (~msMicDevice.notNil and: { ~msMicOK.not }) {
+		("metro: LAV OFF -- '" ++ ~msActualDevice ++ "' offers only " ++ ~msOutOffers ++ " Hz, the Fireface runs at " ++ ~msMicRate ++ " Hz; opening the Fireface would re-clock it under the main server. A headset in call mode (its mic open somewhere) runs at 16-32 kHz: close whatever uses that mic, run `audiorate rig`, reload this tab.").warn };
+	~msAttempts = if (~msMicOK) { [[~msMicRate, ~msMicDevice], [nil, nil]] } {   // Fireface in only at a shared rate; else no input (no mic)
+		[[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]] };   // (rate, input): device rate first
+};
+~msPlan.();
 ~msExpectQuit = false; ~msWantRunning = true; ~msReconnects = 0;
 // boot the named device. Wait for the real boot handshake (ServerBoot) instead of polling: the
 // first version polled at 7 s, found the handshake not yet done, and killed a WORKING server.
@@ -363,7 +367,14 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		n = n + 1; 0.25.wait } }.play(AppClock);
 	// ---- MIC column ----
 	~mdMicBox = CheckBox().string_("mic").value_(~mdMicOn).action_({ |c| ~mdMicOn = c.value; ~mdMicSyn !? { ~mdMicSyn.set(\on, c.value.asInteger) };
-		if (c.value and: { ~mdMicSyn.isNil }) { "metro: no Fireface input on the in-ear server -- mic unavailable".warn; c.value = false; ~mdMicOn = false } });
+		if (c.value and: { ~mdMicSyn.isNil }) {
+			// no Fireface input (the rates did not match at boot): check again; if the in-ears now offer the Fireface's rate,
+			// restart this server WITH the lav and switch it on (2026-10-02)
+			~msPlan.();
+			if (~msMicOK) { "metro: the in-ears now offer the Fireface's rate -- restarting the in-ear server with the lav".postln;
+				~mdMicOn = true; ~msExpectQuit = true; ~msServer.quit; { ~msExpectQuit = false; ~msTryBoot.(0) }.defer(2) } {
+				("metro: still no shared rate (in-ears offer " ++ ~msOutOffers ++ " Hz, Fireface " ++ ~msMicRate ++ " Hz) -- lav unavailable; run `audiorate` in a terminal to see which headset is in call mode").warn;
+				c.value = false; ~mdMicOn = false } } });
 	~mdMicDb = StaticText().string_(~mdDbStr.(~mdMicAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
 	~mdMicVol = Slider().orientation_(\horizontal).fixedHeight_(30).value_(~mdToPos.(~mdMicAmp))
 		.action_({ |sl| ~mdMicAmp = ~mdToAmp.(sl.value); ~mdMicSyn !? { ~mdMicSyn.set(\amp, ~mdMicAmp) }; ~uiLater.(\mdMicDb, { ~mdMicDb.string = ~mdDbStr.(~mdMicAmp) }) });
