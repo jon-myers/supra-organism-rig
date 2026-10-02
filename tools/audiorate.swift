@@ -7,6 +7,8 @@
 //   audiorate rig [rate]               the Supra-Organism setup: default input = MacBook Pro Microphone, Fireface and
 //                                      Multi-Output Device (+ members) -> rate (default 44100), then list
 //   audiorate rates "<name>"           the rates a device offers right now
+//   audiorate stereo "<name>" [L R]    show / set the output pair a Multi-Output or a plain stereo app plays into
+//   audiorate prune | restore          take Multi-Output members stuck in call mode out (saved) / put the saved list back
 // Build: swiftc -O audiorate.swift -o ~/.local/bin/audiorate
 import CoreAudio
 import Foundation
@@ -84,6 +86,38 @@ case "input":
 case "output":
     guard args.count == 2, let d = find(args[1], wantIn: false) else { print("no output device matches"); exit(2) }
     setDefault(kAudioHardwarePropertyDefaultOutputDevice, d, "output")
+case "stereo":   // audiorate stereo "<name>" [L R]: show / set the output pair a Multi-Output or a plain stereo app plays into
+    guard args.count >= 2, let d = find(args[1], wantIn: false) else { print("usage: audiorate stereo \"<device>\" [L R]"); exit(2) }
+    var pa = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyPreferredChannelsForStereo, mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+    if args.count == 4, let l = UInt32(args[2]), let r = UInt32(args[3]) {
+        var ch: [UInt32] = [l, r]; let st = AudioObjectSetPropertyData(d, &pa, 0, nil, 8, &ch); if st != noErr { print("FAILED (\(st))") } }
+    var ch: [UInt32] = [0, 0]; var csz = UInt32(8); AudioObjectGetPropertyData(d, &pa, 0, nil, &csz, &ch)
+    print("\(name(d)): stereo output = channels \(ch[0])/\(ch[1])")
+case "prune", "restore":
+    // prune: take members stuck in call mode (output offers neither 44.1 k nor 48 k) OUT of the Multi-Output Device, saving
+    // the old member list; restore: put the saved list back. Uses kAudioAggregateDevicePropertyFullSubDeviceList (UIDs).
+    guard let mo = find("Multi-Output") else { print("Multi-Output Device: not found"); exit(2) }
+    let save = ("~/.local/state/audiorate_multioutput_members.txt" as NSString).expandingTildeInPath
+    var a = addr(kAudioAggregateDevicePropertyFullSubDeviceList); var cur: CFArray? = nil; var sz = UInt32(MemoryLayout<CFArray?>.size)
+    _ = withUnsafeMutablePointer(to: &cur) { AudioObjectGetPropertyData(mo, &a, 0, nil, &sz, $0) }
+    let uids = (cur as? [String]) ?? []
+    var want: [String]
+    if args[0] == "restore" {
+        guard let txt = try? String(contentsOfFile: save, encoding: .utf8) else { print("nothing saved"); exit(2) }
+        want = txt.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    } else {
+        let byUID = Dictionary(uniqueKeysWithValues: devices().map { (str($0, kAudioDevicePropertyDeviceUID), $0) })
+        want = uids.filter { u in guard let d = byUID[u] else { return true }
+            let r = rates(d); let ok = r.contains(48000) || r.contains(44100)
+            if !ok { print("removing \(name(d)) (offers \(r.map { Int($0) }) -- call mode)") }; return ok }
+        if want.count == uids.count { print("no member is in call mode; nothing to do"); list(); exit(0) }
+        try? FileManager.default.createDirectory(atPath: (save as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try? uids.joined(separator: "\n").write(toFile: save, atomically: true, encoding: .utf8)
+    }
+    var arr = want as CFArray
+    let st = withUnsafeMutablePointer(to: &arr) { AudioObjectSetPropertyData(mo, &a, 0, nil, UInt32(MemoryLayout<CFArray>.size), $0) }
+    print(st == noErr ? "Multi-Output Device members set (\(want.count))" + (args[0] == "prune" ? "; `audiorate restore` puts the old list back" : "") : "FAILED to change members (\(st))")
+    usleep(1_000_000); list()
 case "rig":   // audiorate rig [rate]  (default 44100, the rig's rate since 2026-10-02: Bluetooth members offer 44.1 k even in call mode)
     // no rate given = AUTO (2026-10-02): the best rate BOTH the Multi-Output Device (= every in-ear member) and the Fireface
     // offer right now, 48 k first, then 44.1 k. Bluetooth members change what they offer when they fall into call mode.
