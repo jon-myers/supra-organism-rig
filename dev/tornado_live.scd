@@ -93,22 +93,23 @@ s.waitForBoot { fork {
 		SendReply.kr(Impulse.kr(4), '/fwMeter', w2 ++ [tau, c]);
 	}).load(s);
 	// ---- players: one playhead, gains from the bus ----
-	SynthDef(\fwAmbiX, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, wbus = 0, ambi = 0, abus = 0, out = 0|
+	SynthDef(\fwAmbiX, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, mlag = 0.1, wbus = 0, ambi = 0, abus = 0, out = 0|
 		var bufs = \bufs.kr(0 ! 8), g = In.kr(wbus, 8);
 		var ph = Phasor.ar(t_reset, rate * run, 0, frames, resetPos), seam = (ph.min(frames - ph) / (0.01 * SampleRate.ir)).clip(0, 1);
-		var x = 8.collect { |i| BufRd.ar(4, bufs[i], ph, 1, 4) * g[i].lag(0.05) }.sum * seam * master.lag(0.1);
+		var x = 8.collect { |i| BufRd.ar(4, bufs[i], ph, 1, 4) * g[i].lag(0.05) }.sum * seam * VarLag.kr(master, mlag, warp: \sin);
 		var bf = [x[0] * 0.5.sqrt, x[3], x[1], x[2]];                // ambiX (W Y Z X, SN3D) -> ATK B-format (W X Y Z)
 		Out.ar(abus, bf * ambi.lag(0.05));
 		Out.ar(out, [bf[0] * 2.sqrt + bf[2], bf[0] * 2.sqrt - bf[2]] * 0.5 * (1 - ambi).lag(0.05));   // fold-down: W +- Y
 		SendReply.kr(Impulse.kr(4), '/fwPos', A2K.kr(ph));
 	}).load(s);
-	SynthDef(\fwStereo, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, wbus = 0, ambi = 0, abus = 0, out = 0, n = 8|
+	SynthDef(\fwStereo, { |frames = 1, rate = 1, run = 0, t_reset = 0, resetPos = 0, master = 1, mlag = 0.1, wbus = 0, ambi = 0, abus = 0, out = 0, n = 8|
 		var bufs = \bufs.kr(0 ! 8), g = In.kr(wbus, 8), half = 15.degrad;
 		var ph = Phasor.ar(t_reset, rate * run, 0, frames, resetPos), seam = (ph.min(frames - ph) / (0.01 * SampleRate.ir)).clip(0, 1);
 		var r = 8.collect { |i| BufRd.ar(2, bufs[i], ph, 1, 4) * g[i].lag(0.05) * seam };
 		var bf = r.collect { |y, i| var az = (i * -2pi / n.max(1)); FoaPanB.ar(y[0], az + half, 0) + FoaPanB.ar(y[1], az - half, 0) }.sum;
-		Out.ar(abus, bf * master.lag(0.1) * ambi.lag(0.05));
-		Out.ar(out, r.sum * master.lag(0.1) * (1 - ambi).lag(0.05));
+		var m = VarLag.kr(master, mlag, warp: \sin);
+		Out.ar(abus, bf * m * ambi.lag(0.05));
+		Out.ar(out, r.sum * m * (1 - ambi).lag(0.05));
 		SendReply.kr(Impulse.kr(4), '/fwPos', A2K.kr(ph));
 	}).load(s);
 	s.sync;
@@ -133,7 +134,7 @@ s.waitForBoot { fork {
 			[\bufs, ~fwBufs.collect { |b| b !? (_.bufnum) ? (if (~fwKind == \ambix) { ~fwSilent4 } { ~fwSilent2 }).bufnum }
 				++ ((if (~fwKind == \ambix) { ~fwSilent4 } { ~fwSilent2 }).bufnum ! (~fwMax - ~fwN)),
 			\frames, ~fwFrames.max(1), \rate, ~fwSR / s.sampleRate, \run, was.asInteger, \wbus, ~fwWBus.index, \n, ~fwN,
-			\master, ~fwP[\master].dbamp, \out, ~fwOutBus, \ambi, 0, \abus, ~fwDummy4.index]);
+			\master, ~fwMasterNow ? ~fwP[\master].dbamp, \out, ~fwOutBus, \ambi, 0, \abus, ~fwDummy4.index]);
 		oldSyn !? { oldSyn.free }; ~fwSetAmbi.(~fwP[\ambi]); ~fwSetShare.();
 		old !? { 0.5.wait; old.do { |b| b !? { b.free } } };
 		("follow: " ++ set[\name] ++ " loaded (" ++ ok.size ++ " files, " ++ (~fwFrames / ~fwSR).round(0.1) ++ " s)").postln;
@@ -160,6 +161,23 @@ s.waitForBoot { fork {
 			.action_({ |m| ~fwP[\norm] = m.value; ~fwSetShare.() });
 		~fwLag7 = CheckBox().string_("CENTRAL (7) sets the lag").value_(~fwP[\lag7]).action_({ |c| ~fwP[\lag7] = c.value; ~fwSetShare.() });
 		~fwRev = CheckBox().string_("reverse (busy centre = slower)").value_(~fwP[\rev]).action_({ |c| ~fwP[\rev] = c.value; ~fwSetShare.() });
+		// MASTER FADER (2026-10-02, Jon): fader position p -> amp 2 p^2 (p 0.707 = 0 dB, top = +6 dB, bottom = off); FADE IN / FADE OUT
+		// glide the level over `fade s` on the server (the fader itself does not animate: nothing on screen moves on its own)
+		~fwToAmp = { |p| 2 * p.squared }; ~fwToPos = { |a| (a / 2).max(0).sqrt.min(1) };
+		~fwDbStr = { |a| if (a < 0.0001) { "off" } { (a.ampdb.round(0.5)).asString ++ " dB" } };
+		~fwFaderAmp = ~fwP[\master].dbamp; ~fwMasterNow = ~fwMasterNow ? ~fwFaderAmp; ~fwP[\fade] = ~fwP[\fade] ? 8;
+		~fwSetMaster = { |amp, lag = 0.1| ~fwMasterNow = amp; ~fwPlaySyn !? { ~fwPlaySyn.set(\mlag, lag, \master, amp) } };
+		~fwMasterTxt = StaticText().string_(~fwDbStr.(~fwFaderAmp)).fixedWidth_(64);
+		~fwFadeTxt = StaticText().string_("").fixedWidth_(170);
+		~fwFader = Slider().orientation_(\horizontal).fixedHeight_(28).value_(~fwToPos.(~fwFaderAmp)).action_({ |sl|
+			~fwFaderAmp = ~fwToAmp.(sl.value); ~fwP[\master] = ~fwFaderAmp.max(0.00001).ampdb; ~fwSetMaster.(~fwFaderAmp);
+			~uiLater.(\fwMaster, { ~fwMasterTxt.string = ~fwDbStr.(~fwFaderAmp); ~fwFadeTxt.string = "" }) });
+		~fwFadeNb = NumberBox().clipLo_(0.1).clipHi_(120).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~fwP[\fade]).fixedWidth_(48)
+			.action_({ |b| ~fwP[\fade] = b.value });
+		~fwFadeIn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(80).action_({
+			~fwSetMaster.(~fwFaderAmp, ~fwP[\fade]); ~fwFadeTxt.string = "fading in to " ++ ~fwDbStr.(~fwFaderAmp) ++ " over " ++ ~fwP[\fade] ++ " s" });
+		~fwFadeOut = Button().states_([["FADE OUT", Color.white, Color.red(0.6)]]).fixedWidth_(80).action_({
+			~fwSetMaster.(0, ~fwP[\fade]); ~fwFadeTxt.string = "fading out over " ++ ~fwP[\fade] ++ " s" });
 		~fwAmbiBox = CheckBox().string_("AMBI").value_(~fwP[\ambi]).action_({ |c| ~fwSetAmbi.(c.value) });
 		~fwBars = { LevelIndicator().fixedWidth_(46).fixedHeight_(120).drawsPeak_(false) } ! ~fwMax;
 		~fwShareTxt = { StaticText().string_("").fixedWidth_(46).align_(\center).font_(Font.sansSerif(10)) } ! ~fwMax;
@@ -177,8 +195,8 @@ s.waitForBoot { fork {
 			HLayout(StaticText().string_("floor"), nb.(\floor, 0, 1, 0.01, 2), StaticText().string_("contrast"), nb.(\contrast, 0.5, 6, 0.1, 1),
 				StaticText().string_("lag s (60 dB)"), nb.(\lag, 0.5, 300, 1, 0), ~fwLag7, StaticText().string_("still"), nb.(\slow, 1, 300, 1, 0),
 				StaticText().string_("busy"), nb.(\fast, 0.5, 300, 1, 0), ~fwRev, nil),
-			HLayout(StaticText().string_("master dB"), NumberBox().clipLo_(-40).clipHi_(12).value_(~fwP[\master]).fixedWidth_(52)
-				.action_({ |b| ~fwP[\master] = b.value; ~fwPlaySyn !? { ~fwPlaySyn.set(\master, b.value.dbamp) } }), ~fwAmbiBox, ~fwTauTxt, nil),
+			HLayout(StaticText().string_("MASTER"), ~fwFader, ~fwMasterTxt, StaticText().string_("fade s"), ~fwFadeNb, ~fwFadeIn, ~fwFadeOut, ~fwFadeTxt),
+			HLayout(~fwAmbiBox, ~fwTauTxt, nil),
 			HLayout(*(~fwMax.collect { |i| VLayout(~fwBars[i], ~fwShareTxt[i], ~fwNameTxt[i], ~fwAssign[i]) } ++ [nil])),
 			StaticText().string_("bars = each render's share (all shares add to 1).  sN under a bar = the sensor it follows (s7 = central)."),
 			nil);

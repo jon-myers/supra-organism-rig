@@ -210,6 +210,12 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdMicSyn = if (~msServer.options.inDevice.notNil and: { ~msServer.options.numInputBusChannels > 0 } and: { ~msServer.options.inDevice.beginsWith("Fireface") }) {
 		Synth(\mdMic, [\in, ~mdMicIn, \amp, ~mdMicAmp, \on, ~mdMicOn.asInteger, \out, ~msOutBus ? 0], ~msServer, \addToTail) } { nil };
 	OSCdef(\mdMicLvl, { |m| ~mdMicPeak = m[3] }, '/mdMicLvl', ~msServer.addr);
+	// MASTER (2026-10-02, Jon: "fade both phantom pain and metronomes in and out"): the LAST node on this server scales everything
+	// it plays -- click, track, mic -- with a fade time (VarLag, sine-shaped). Created after the mic (tail); click and track are
+	// added at the head, so they all pass through it.
+	SynthDef(\msMaster, { |master = 1, mlag = 0.1| ReplaceOut.ar(0, In.ar(0, 2) * VarLag.kr(master, mlag, warp: \sin)) }).send(~msServer);
+	~msServer.sync;
+	~msMasterSyn = Synth(\msMaster, [\master, ~msMasterNow ? 1], ~msServer, \addToTail);
 	~mdTrackSynth = nil; ~mdTrackBuf = nil; ~mdTrackPlaying = false; ~mdTrackPos = 0;   // a (re)boot loses buffers and nodes
 	~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
 
@@ -401,16 +407,35 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdSyncText = StaticText().string_("").fixedHeight_(16).font_(Font.default.size_(11));
 	~mdHpBox.string_("click").fixedWidth_(70); ~mdIfBox.string_("click").fixedWidth_(70);
 	~mdHpVol.fixedHeight_(30); ~mdIfVol.fixedHeight_(30); ~mdTrackVol.fixedHeight_(30);
+	// MASTER fader: position p -> amp 2 p^2 (p 0.707 = 0 dB, top +6 dB, bottom off); FADE IN / OUT glide over `fade s` on the
+	// server; the fader itself never animates (nothing on screen moves on its own)
+	~msToAmp = { |p| 2 * p.squared }; ~msToPosM = { |a| (a / 2).max(0).sqrt.min(1) };
+	~msDbStrM = { |a| if (a < 0.0001) { "off" } { (a.ampdb.round(0.5)).asString ++ " dB" } };
+	~msFaderAmp = ~msFaderAmp ? 1; ~msMasterNow = ~msMasterNow ? ~msFaderAmp; ~msFadeS = ~msFadeS ? 8;
+	~msSetMaster = { |amp, lag = 0.1| ~msMasterNow = amp; ~msMasterSyn !? { ~msMasterSyn.set(\mlag, lag, \master, amp) } };
+	~msMasterTxt = StaticText().string_(~msDbStrM.(~msFaderAmp)).fixedWidth_(64).font_(Font.default.size_(15).boldVariant);
+	~msFadeTxt = StaticText().string_("").fixedWidth_(190);
+	~msFader = Slider().orientation_(\horizontal).fixedHeight_(30).value_(~msToPosM.(~msFaderAmp)).action_({ |sl|
+		~msFaderAmp = ~msToAmp.(sl.value); ~msSetMaster.(~msFaderAmp);
+		~uiLater.(\msMaster, { ~msMasterTxt.string = ~msDbStrM.(~msFaderAmp); ~msFadeTxt.string = "" }) });
+	~msFadeNb = NumberBox().clipLo_(0.1).clipHi_(120).step_(0.5).scroll_step_(0.5).decimals_(1).value_(~msFadeS).fixedWidth_(48).action_({ |b| ~msFadeS = b.value });
+	~msFadeInBtn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(80).action_({
+		~msSetMaster.(~msFaderAmp, ~msFadeS); ~msFadeTxt.string = "fading in to " ++ ~msDbStrM.(~msFaderAmp) ++ " over " ++ ~msFadeS ++ " s" });
+	~msFadeOutBtn = Button().states_([["FADE OUT", Color.white, Color.red(0.6)]]).fixedWidth_(80).action_({
+		~msSetMaster.(0, ~msFadeS); ~msFadeTxt.string = "fading out over " ++ ~msFadeS ++ " s" });
+	~msMasterRow = HLayout(StaticText().string_("MASTER (click + track + mic)").font_(Font.default.size_(14).boldVariant),
+		[~msFader, stretch: 1], ~msMasterTxt, StaticText().string_("fade s"), ~msFadeNb, ~msFadeInBtn, ~msFadeOutBtn, ~msFadeTxt);
 	~mdOutBox = VLayout(
 		StaticText().string_("OUTPUTS -- both always play; untick to mute.   MIC = the lav on Fireface XLR 1 (in-ears: via SuperCollider; speakers: inside TotalMix)").font_(Font.default.size_(14).boldVariant),
 		HLayout(VLayout(StaticText().string_("SPEAKERS").font_(Font.default.boldVariant), HLayout(~mdIfPairMenu, StaticText().string_("delay ms"), ~mdIfDelayBox)).spacing_(2),
 			[HLayout(~mdIfBox, ~mdIfVol, ~mdIfDbText), stretch: 1], [HLayout(~mdTrkIfBox, ~mdTrkIfVol, ~mdTrkIfDbText), stretch: 1],
 			[HLayout(~mdMicIfBox, ~mdMicIfVol, ~mdMicIfDbText), stretch: 1]),
-		HLayout(VLayout(StaticText().string_("IN-EARS").font_(Font.default.boldVariant), StaticText().string_("BTD 700 (Bluetooth / Auracast)").font_(Font.default.size_(11))).spacing_(2),
+		HLayout(VLayout(StaticText().string_("IN-EARS").font_(Font.default.boldVariant), StaticText().string_(if ((~msActualDevice ? "").beginsWith("Fireface")) { "= Fireface Main 1/2 (for now)" } { ~msActualDevice ? "system default" }).font_(Font.default.size_(11))).spacing_(2),
 			[HLayout(~mdHpBox, ~mdHpVol, ~mdHpDbText), stretch: 1], [HLayout(~mdTrkHpBox, ~mdTrackVol, ~mdTrackDbText), stretch: 1],
 			[HLayout(~mdMicBox, ~mdMicVol, ~mdMicDb, ~mdMicMeter), stretch: 1]),
 		~msDevText, ~mdSyncText).spacing_(4);
 	~msWin.layout = VLayout(
+		~msMasterRow,
 		~mdOutBox,
 		View().fixedHeight_(1).background_(Color.grey(0.6)),
 		~msNow, ~msTarget, ~msBeatText,
