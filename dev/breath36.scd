@@ -72,6 +72,7 @@ before evaluating to load fewer. Select all, evaluate.
 // speed slider + 0.5 * knob * c * (levels - 1), c = ensemble activity (5-s |AC| of central) / slow level / DC / AC.
 ~b36F = ~b36F ? (on: true ! 8, knob: 1 ! 8, signal: 0, sens: 1, smooth: 0.1);
 if (~b36F[\on].size < 8) { ~b36F[\on] = ~b36F[\on].extend(8, true); ~b36F[\knob] = ~b36F[\knob].extend(8, 1) };
+~b36F[\on] = false ! 8;   // the FORCE mapping is OFF on every load (2026-10-02, Jon): tick a fader group to bring force in
 // PER FADER GROUP (2026-10-01, Jon): group g = voices g, g+8, g+16, ... (the tiled Korg fader); Korg knob g = its offset
 // depth. Sensor per group: 1-6 -> sensors 1-6, 7 -> CENTRAL, 8 -> none (yet).
 ~b36FSensorOf = [0, 1, 2, 3, 4, 5, 6, nil];
