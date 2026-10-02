@@ -114,7 +114,7 @@ s.waitForBoot {
 				\ratio, ~swOrigBuf.sampleRate / (~swSR ? 44100), \offset, ~ssP[\offset] * ~swOrigBuf.sampleRate,
 				\amp, ~ssP[\amp] * ~swP[\trim], \on, (~ssP[\on] and: { ~ssDestMain.() }).asInteger, \out, ~swOutBus]) } };
 	// headphone copy on the metronome's server
-	~ssHpState = "off"; ~ssHpPos = 0; ~ssHpT = nil; ~ssResyncs = 0; ~ssLat = 0.08;
+	~ssHpState = "off"; ~ssHpPos = 0; ~ssHpT = nil; ~ssResyncs = 0; ~ssLat = 0.2;   // scheduling margin for play / seek bundles (0.08 gave "late" messages when the language was busy)
 	~ssHpAvailable = { ~msServer.notNil and: { ~msServer.serverRunning } };
 	~ssHpSetup = { var sv = ~msServer;   // load the original + a player on the metro server (again after a metro reboot)
 		if (~ssHpAvailable.().not) { ~ssHpState = "metronome server not running -- headphones unavailable" } {

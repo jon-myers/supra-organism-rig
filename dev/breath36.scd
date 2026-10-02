@@ -51,6 +51,17 @@ before evaluating to load fewer. Select all, evaluate.
 ~b36Midi = ~b36Midi ? true;
 ~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = true;   // QUAD by default again (2026-09-30, Jon)   // quad outputs, in circle order
 ~b36N = 0; ~b36Fade = 3.0; ~b36Amp = 0.8; ~b36Comp = false; ~b36Spread = 0.9;
+// PULSE (2026-10-02, Jon): rhythmic UNISON breath attacks -- every playing voice starts its next breath together on a beat.
+// Beats from the METRONOME (its /msBeat, so the breaths follow its tempo and glides) or an own tempo; every N beats; each breath
+// lasts gate x the pulse length (then fades); loosen = up to N ms of random spread; offset = ms later / earlier than the beat.
+// Each pulse is scheduled one pulse AHEAD (on the predicted beat), so the server never gets it late. While PULSE is on the free-running players wait, keeping their places.
+~b36Pulse = ~b36Pulse ? (on: false, src: 0, every: 1, bpm: 60, gate: 0.8, jitter: 0, offset: 0);
+~b36Pulse[\on] = false;   // never on at load
+// TIERS (2026-10-02, Jon): mode 1 = a probabilistic polyrhythm on the 16th grid. Voices interleave into three tiers of 12
+// (voice 1 -> A, 2 -> B, 3 -> C, 4 -> A ...): A may attack only on the beat, B on the beat or the off-beat 8th, C on any 16th
+// but at most maxC per beat. Each voice rolls its own dice per allowed slot (pA / pB / pC), so each does its own thing and
+// is often silent. Each breath lasts gate x its tier's subdivision (beat / 8th / 16th). mode 0 = unison (all on each pulse).
+[[\mode, 0], [\pA, 0.35], [\pB, 0.25], [\pC, 0.15], [\maxC, 2]].do { |kv| ~b36Pulse[kv[0]] = ~b36Pulse[kv[0]] ? kv[1] };
 ~b36Hpf = ~b36Hpf ? 70;   // breath LOW CUT in Hz (24 dB/oct), new breaths pick it up; 10 = effectively off
 ~b36Glide = 0.5;    // seconds for a morph slider move to settle
 ~spP = (x: 0, spread: 0.5);
@@ -93,6 +104,7 @@ s.waitForBoot {
 	~b36Rout !? { ~b36Rout.stop }; ~b36Players !? { ~b36Players.do(_.stop) }; ~b36Synths !? { ~b36Synths.do(_.free) };
 	~b36Silent !? { ~b36Silent.free }; ~b36MorphBus !? { ~b36MorphBus.free }; ~b36GainBus !? { ~b36GainBus.free };
 	~b36FCRout !? { ~b36FCRout.stop }; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus !? { ~b36FCBus.free };
+	~b36LoadRout !? { ~b36LoadRout.stop };
 	~spBufs !? { ~spBufs.flat.do { |b| b !? { b.free } } }; ~spBufs = nil; ~b36Bufs = nil; ~b36Players = nil;
 	MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 	s.sync;
@@ -181,12 +193,14 @@ s.waitForBoot {
 
 	// ---- buffers: level 1 (originals) + speed levels (skipped per voice if not rendered) ----
 	~b36Bufs = meta["voices"].collect { |v| v["files"].collect { |f| Buffer.read(s, ~b36Dir +/+ f) } };
-	~spBufs = meta["voices"].collect { |v, i|
-		[~b36Bufs[i]] ++ ~b36SpeedLevels.collect { |lv|
-			var files = v["files"].collect { |f| ~b36Dir +/+ "speed" +/+ (f.splitext[0] ++ "_x" ++ lv.asString ++ ".wav") };
-			if (files.every { |p| File.exists(p) }) { files.collect { |p| Buffer.read(s, p) } } { nil };
-		};
-	};
+	// BACKGROUND LOADING (2026-10-02, Jon): only the 1x renders load now (the patch is playable in seconds); the speed levels load
+	// one by one AFTER the window is up (~b36LoadLevels, slowest first), each usable as soon as it is in. Until then a voice set
+	// faster than what is loaded plays the fastest loaded level and steps up as the rest arrive.
+	~spFiles = meta["voices"].collect { |v| ~b36SpeedLevels.collect { |lv|
+		var files = v["files"].collect { |f| ~b36Dir +/+ "speed" +/+ (f.splitext[0] ++ "_x" ++ lv.asString ++ ".wav") };
+		if (files.every { |p| File.exists(p) }) { files } { nil } } };
+	~spBufs = meta["voices"].collect { |v, i| [~b36Bufs[i]] ++ (nil ! ~b36SpeedLevels.size) };
+	~b36LoadedLevels = 0;
 	("breath36: reading " ++ ~spBufs.flat.reject(_.isNil).size ++ " buffers ...").postln;
 	s.sync;
 	// 2026-10-01: with ~2300 buffers loading at once some /b_info replies get lost over UDP, leaving a Buffer with
@@ -271,24 +285,9 @@ s.waitForBoot {
 	~spRollOffsets.(~spP.spread);
 	~gpSet = { |secs| ~gpP[\mean] = secs.clip(0, 12); ~b36Dirty = true };
 
-	// ---- the players: one routine per voice, breath by breath ----
-	~b36Players = nv.collect { |i|
-		Routine {
-			loop {
-				var k = ~spLevel[i], bufs, ons, b0, total, n, idx, t0, t1, dur, fade, gap, audible;
-				// a speed level whose buffers have no size info yet (lost reply): play this breath at 1x, ask again
-				if (~spBufs[i][k].any { |b| b.numFrames.isNil }) { ~spBufs[i][k].do { |b| if (b.numFrames.isNil) { b.updateInfo } }; k = 0 };
-				bufs = ~spBufs[i][k]; ons = ~spOnsets[i][k]; b0 = bufs[0];
-				total = b0.numFrames / b0.sampleRate; n = ons.size;
-				if (~segIdx[i].isNil) { ~segIdx[i] = (~segPhase[i] * n).floor.asInteger; ~segN[i] = n };
-				if (~segN[i] != n) { ~segIdx[i] = (~segIdx[i] / ~segN[i] * n).round.asInteger; ~segN[i] = n };   // level changed: keep the place
-				idx = ~segIdx[i] % n;
-				t0 = ons[idx]; t1 = if (idx + 1 < n) { ons[idx + 1] } { total };
-				dur = (t1 - t0).max(0.05); fade = ~gpP.fade.min(dur * 0.45);
-				gap = ~gpP[\mean] * ~gpSeq[i][~gpP.ncviIdx].wrapAt(~gapIdx[i]);
-				audible = (~b36OnState[i] == 1) or: { ~offAt[i].notNil and: { (Main.elapsedTime - ~offAt[i]) < (~b36Fade + 0.5) } };
-				if (audible) {
-					s.makeBundle(s.latency, {
+	// one breath segment of voice i, routed AMBI / quad / stereo as the window is set; used by the free player and by PULSE
+	~b36PlaySeg = { |i, bufs, b0, t0, dur, fade, lat|
+		s.makeBundle(lat, {
 						if ((~b36Ambi == true) and: { ~ambiBus.notNil }) {   // AMBI (dev/ambi.scd): encoded at its azimuth, decoded quad + binaural there
 							Synth(\b36SegA, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
@@ -302,14 +301,79 @@ s.waitForBoot {
 							Synth(\b36Seg, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
 								\pan, ~b36Pan[i], \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)]) } };
-					});
-				};
+		}) };
+	// ---- the players: one routine per voice, breath by breath ----
+	~b36Players = nv.collect { |i|
+		Routine {
+			loop {
+				var k = ~spLevel[i], bufs, ons, b0, total, n, idx, t0, t1, dur, fade, gap, audible;
+				if (~b36Pulse[\on] == true) { 0.05.wait } {   // PULSE plays the breaths now; this voice keeps its place
+				// a speed level whose buffers have no size info yet (lost reply): play this breath at 1x, ask again
+				if (~spBufs[i][k].isNil) { k = 0 };   // level not loaded (yet)
+				if (~spBufs[i][k].any { |b| b.numFrames.isNil }) { ~spBufs[i][k].do { |b| if (b.numFrames.isNil) { b.updateInfo } }; k = 0 };
+				bufs = ~spBufs[i][k]; ons = ~spOnsets[i][k]; b0 = bufs[0];
+				total = b0.numFrames / b0.sampleRate; n = ons.size;
+				if (~segIdx[i].isNil) { ~segIdx[i] = (~segPhase[i] * n).floor.asInteger; ~segN[i] = n };
+				if (~segN[i] != n) { ~segIdx[i] = (~segIdx[i] / ~segN[i] * n).round.asInteger; ~segN[i] = n };   // level changed: keep the place
+				idx = ~segIdx[i] % n;
+				t0 = ons[idx]; t1 = if (idx + 1 < n) { ons[idx + 1] } { total };
+				dur = (t1 - t0).max(0.05); fade = ~gpP.fade.min(dur * 0.45);
+				gap = ~gpP[\mean] * ~gpSeq[i][~gpP.ncviIdx].wrapAt(~gapIdx[i]);
+				audible = (~b36OnState[i] == 1) or: { ~offAt[i].notNil and: { (Main.elapsedTime - ~offAt[i]) < (~b36Fade + 0.5) } };
+				if (audible) { ~b36PlaySeg.(i, bufs, b0, t0, dur, fade, s.latency) 				};
 				~gapIdx[i] = ~gapIdx[i] + 1;
 				~segIdx[i] = idx + 1;
 				(dur + gap).wait;
+				}
 			}
 		}.play(SystemClock);
 	};
+
+	// ---- PULSE engine ----
+	~b36PulseN = 0;
+	~b36PulsePeriod = { (60 / (if (~b36Pulse[\src] == 0) { ~msBpm ? 60 } { ~b36Pulse[\bpm] }).max(1)) * ~b36Pulse[\every] };
+	// one voice's next breath, lasting at most maxDur, starting lat seconds from now
+	~b36PulseVoice = { |i, maxDur, lat|
+		var k = ~spLevel[i], bufs, ons, b0, total, n, idx, t0, t1, d, fade;
+		if (~spBufs[i][k].isNil or: { ~spBufs[i][k].any { |b| b.numFrames.isNil } }) { k = 0 };
+		bufs = ~spBufs[i][k]; ons = ~spOnsets[i][k]; b0 = bufs[0]; total = b0.numFrames / b0.sampleRate; n = ons.size;
+		if (~segIdx[i].isNil) { ~segIdx[i] = (~segPhase[i] * n).floor.asInteger; ~segN[i] = n };
+		idx = ~segIdx[i] % n; t0 = ons[idx]; t1 = if (idx + 1 < n) { ons[idx + 1] } { total };
+		d = (t1 - t0).max(0.05).min(maxDur.max(0.05)); fade = ~gpP.fade.min(d * 0.45);
+		~b36PlaySeg.(i, bufs, b0, t0, d, fade, lat.max(0.01));
+		~segIdx[i] = idx + 1 };
+	~b36Tier = { |i| i % 3 };   // 0 = A (beat), 1 = B (beat / 8th), 2 = C (16ths)
+	~b36PulseHits = 0;
+	// ONE PULSE AHEAD (2026-10-02: 20 ms of margin gave the server "late" messages): when pulse n fires, its breaths are stamped
+	// for the NEXT pulse (now + period, + offset), so attacks land on the predicted beat with >= 150 ms of scheduling margin
+	~b36PulseFire = { var per = ~b36PulsePeriod.(), base = per + (~b36Pulse[\offset] / 1000);
+		var base2 = if (base < 0.15) { base + per } { base };
+		var jit = { (~b36Pulse[\jitter] / 1000).rand }, beat = per / ~b36Pulse[\every].max(1), g = ~b36Pulse[\gate];
+		if (~b36Pulse[\mode] == 0) {
+			nv.do { |i| if (~b36OnState[i] == 1) { ~b36PulseVoice.(i, per * g, base2 + jit.()); ~b36PulseHits = ~b36PulseHits + 1 } }
+		} {
+			// TIERS: the beat is 4 sixteenths; slot j starts j x beat/4 after the beat
+			nv.do { |i| if (~b36OnState[i] == 1) {
+				var tier = ~b36Tier.(i), cnt = 0;
+				var slots = switch (tier, 0, { [0] }, 1, { [0, 2] }, { [0, 1, 2, 3] });
+				var p = [~b36Pulse[\pA], ~b36Pulse[\pB], ~b36Pulse[\pC]][tier];
+				var len = [beat, beat / 2, beat / 4][tier] * g;
+				slots.do { |j| if (p.coin and: { (tier != 2) or: { cnt < ~b36Pulse[\maxC] } }) {
+					cnt = cnt + 1; ~b36PulseHits = ~b36PulseHits + 1;
+					~b36PulseVoice.(i, len, base2 + (j * beat / 4) + jit.()) } } } } };
+		~b36PulseN = ~b36PulseN + 1; ~b36Dirty = true };
+	// metronome beats (the metro server's /msBeat; counts from its start)
+	OSCdef(\b36Beat, { |msg, time, addr| var n = msg[3].asInteger;
+		if ((~b36Pulse[\on] == true) and: { ~b36Pulse[\src] == 0 } and: { ~msServer.notNil } and: { addr.port == ~msServer.addr.port }
+			and: { ((n - 1) % ~b36Pulse[\every].max(1)) == 0 }) { ~b36PulseFire.() } }, '/msBeat');
+	// own tempo
+	~b36PulseRout !? { ~b36PulseRout.stop };
+	~b36PulseRestart = { ~b36PulseRout !? { ~b36PulseRout.stop };
+		~b36PulseRout = Routine { loop { if ((~b36Pulse[\on] == true) and: { ~b36Pulse[\src] == 1 }) { ~b36PulseFire.() }; ~b36PulsePeriod.().wait } }.play(SystemClock) };
+	~b36PulseSet = { |on| ~b36Pulse[\on] = on;
+		if (on and: { ~b36Pulse[\src] == 0 } and: { ~msSynth.isNil }) { "breath36: PULSE follows the metronome -- start the metronome (tab 4), or choose own tempo".warn };
+		~b36PulseRestart.() };
+	~b36PulseRestart.();
 
 	// ---------------- GUI ----------------
 	~b36Win !? { ~b36Win.onClose = nil; if (~b36Win.isClosed.not) { ~b36Win.close } };
@@ -386,6 +450,17 @@ s.waitForBoot {
 			~b36VText[i], ~spLvlText[i]
 		])).spacing_(2)
 	};
+	~b36PulseBox = CheckBox().string_("PULSE (unison breaths)").value_(false).action_({ |c| ~b36PulseSet.(c.value) });
+	~b36PulseSrc = PopUpMenu().items_(["metronome beats", "own tempo"]).value_(~b36Pulse[\src]).fixedWidth_(150)
+		.action_({ |m| ~b36Pulse[\src] = m.value; ~b36PulseRestart.() });
+	~b36PulseEvery = PopUpMenu().items_(["every beat", "every 2", "every 3", "every 4", "every 8"]).value_([1, 2, 3, 4, 8].indexOf(~b36Pulse[\every]) ? 0).fixedWidth_(100)
+		.action_({ |m| ~b36Pulse[\every] = [1, 2, 3, 4, 8][m.value]; ~b36PulseRestart.() });
+	~b36PulseNb = { |key, lo, hi, step, dec| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec).value_(~b36Pulse[key]).fixedWidth_(52)
+		.action_({ |b| ~b36Pulse[key] = b.value }) };
+	~b36PulseText = StaticText().string_("").fixedWidth_(170);
+	~b36LoadText = StaticText().string_("").fixedWidth_(330).font_(Font.default.size_(11));
+	~b36PulseMode = PopUpMenu().items_(["unison", "tiers (A beat / B 8ths / C 16ths)"]).value_(~b36Pulse[\mode]).fixedWidth_(230)
+		.action_({ |m| ~b36Pulse[\mode] = m.value });
 	~b36FSig = PopUpMenu().items_(["AC (press up, release down)", "DC (press pushes up)"]).value_(~b36F[\signal]).fixedWidth_(200)
 		.action_({ |m| ~b36F[\signal] = m.value; ~b36FApplyAll.() });
 	~b36FSens = NumberBox().clipLo_(0).clipHi_(5).step_(0.1).scroll_step_(0.1).decimals_(1).value_(~b36F[\sens]).fixedWidth_(46)
@@ -419,7 +494,7 @@ s.waitForBoot {
 		HLayout(StaticText().string_("0"), nil, StaticText().string_(nv.asString ++ " voices")),
 		HLayout([VLayout(~spText, ~spSlider,
 			HLayout(*(levelNames.collect { |n| StaticText().string_(n.asString ++ "x").align_(\center) })),
-			HLayout(StaticText().string_("spread (steps 0..1.5)").fixedWidth_(130), ~spSpread, ~spRollBtn),
+			HLayout(StaticText().string_("spread (steps 0..1.5)").fixedWidth_(130), ~spSpread, ~spRollBtn), ~b36LoadText,
 			HLayout(~b36FCBox, ~b36FCKnob, ~b36FCMenu, StaticText().string_("delay s"),
 			NumberBox().clipLo_(0).clipHi_(60).decimals_(1).step_(0.5).scroll_step_(0.5).value_(~b36FC[\delay]).fixedWidth_(46)
 				.action_({ |b| ~b36FC[\delay] = b.value }),
@@ -440,6 +515,12 @@ s.waitForBoot {
 			CheckBox().string_("QUAD -> outs " ++ (~b36QuadOuts + 1).join(" ")).value_(~b36Quad).action_({ |c| ~b36Quad = c.value }), nil,
 			StaticText().string_("tiled " ++ performers.collect(_.keep(1)).join("/") ++ "; speed levels loaded for "
 				++ ~spAvail.count(_ == levelNames.size) ++ "/" ++ nv ++ " voices")),
+		HLayout(~b36PulseBox, ~b36PulseSrc, ~b36PulseEvery, StaticText().string_("own BPM"), ~b36PulseNb.(\bpm, 10, 400, 1, 0),
+			StaticText().string_("gate"), ~b36PulseNb.(\gate, 0.05, 1, 0.05, 2), StaticText().string_("loosen ms"), ~b36PulseNb.(\jitter, 0, 200, 5, 0),
+			StaticText().string_("offset ms"), ~b36PulseNb.(\offset, -300, 300, 5, 0), ~b36PulseText, nil),
+		HLayout(StaticText().string_("PULSE mode"), ~b36PulseMode, StaticText().string_("  chance per slot:  A (beat)"), ~b36PulseNb.(\pA, 0, 1, 0.05, 2),
+			StaticText().string_("B (beat / 8th)"), ~b36PulseNb.(\pB, 0, 1, 0.05, 2), StaticText().string_("C (16ths)"), ~b36PulseNb.(\pC, 0, 1, 0.05, 2),
+			StaticText().string_("C max per beat"), ~b36PulseNb.(\maxC, 0, 4, 1, 0), nil),
 		HLayout(StaticText().string_("FORCE per fader group (Korg knob g = depth; morph = slider + 0.5 x knob x signal)").font_(Font.default.boldVariant),
 			~b36FSig, StaticText().string_("sens x"), ~b36FSens, StaticText().string_("smooth s"), ~b36FSmooth, nil),
 		~b36FStrip,
@@ -464,6 +545,9 @@ s.waitForBoot {
 				~spLvlText[i].string = levelNames[~spLevel[i]].asString ++ "x";
 			};
 		};
+		~b36LoadText !? { ~b36LoadText.string = if (~b36LoadedLevels < ~b36SpeedLevels.size) {
+			"speed levels loading: " ++ ~b36LoadedLevels ++ "/" ++ ~b36SpeedLevels.size ++ " (up to " ++ levelNames[~b36LoadedLevels] ++ "x usable)" } { "" } };
+		~b36PulseText.string = if (~b36Pulse[\on] == true) { "pulse " ++ ~b36PulseN ++ ", " ++ ~b36PulseHits ++ " breaths" ++ " @ " ++ (60 / ~b36PulsePeriod.() * ~b36Pulse[\every]).round(0.1) ++ " BPM" } { "" };
 		~b36FCText.string = if (~b36FC[\on] and: { ~b36FCX.notNil }) {
 			"signal " ++ (~b36FCVal * 100).round.asInteger ++ "%  ->  speed " ++ levelNames[~b36FCX.round.asInteger] ++ "x  (+" ++ ~b36FCOff.round(0.1) ++ " steps)" }
 			{ "speed = the slider alone" };
@@ -552,10 +636,28 @@ s.waitForBoot {
 	};
 
 	~b36Win.onClose = { ~b36Rout.stop; ~b36Players.do(_.stop); ~b36Synths.do(_.free);
-		~b36FCRout.stop; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus.free; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
+		~b36FCRout.stop; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus.free;
+		~b36PulseRout !? { ~b36PulseRout.stop }; OSCdef(\b36Beat).free; ~b36Pulse[\on] = false; ~b36LoadRout !? { ~b36LoadRout.stop }; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
 		~b36Silent.free; ~b36MorphBus.free; ~b36GainBus.free;
 		MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 		~spBufs.flat.do { |b| b !? { b.free } } };
+	// ---- the speed levels, in the background ----
+	~b36LoadRout !? { ~b36LoadRout.stop };
+	~b36LoadRout = Routine {
+		~b36SpeedLevels.do { |lv, li| var k = li + 1, t0 = Main.elapsedTime, bufs, missing;
+			bufs = nv.collect { |i| ~spFiles[i][li] !? { |files| files.collect { |p| Buffer.read(s, p) } } };
+			s.sync;
+			block { |done| 5.do { missing = bufs.flat.reject(_.isNil).select { |b| b.numFrames.isNil };
+				if (missing.isEmpty) { done.value }; missing.do { |b| b.updateInfo }; s.sync; 0.2.wait } };
+			nv.do { |i| ~spBufs[i][k] = bufs[i] };
+			~spAvail = ~spBufs.collect { |sets| sets.detectIndex(_.isNil) ? sets.size };
+			~b36LoadedLevels = k;
+			{ ~spSetAll.(~spP.x) }.defer;   // voices waiting for a faster level step up now
+			("breath36: speed " ++ lv ++ "x loaded (" ++ (Main.elapsedTime - t0).round(0.1) ++ " s)").postln;
+			~b36Dirty = true;
+		};
+		"breath36: all speed levels loaded".postln;
+	}.play(AppClock);
 	("BREATH36_READY  (" ++ nv ++ " voices tiled " ++ performers.join("/") ++ "; speed levels " ++ levelNames.asString
 		++ "; groups " ++ ~mkGroupVoices.collect(_.size).asString ++ ")").postln;
 	};
