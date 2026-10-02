@@ -32,7 +32,7 @@ var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~r
 var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \ambi, \concat, \solo, \follow, \tornado];   // ambi after breath36 (reads ~b36Meta)
 ~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath, \ambi, \concat, \solo, \follow, \tornado];                        // tab order (10th = key 0, 11th = key -, 12th = key =)
 ~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE", fbreath: "BREATH FORCE", ambi: "AMBI", concat: "CONCAT", solo: "SOLO (particles)", follow: "FOLLOW (tornado files)", tornado: "TORNADO (live ending)");
-~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36, solo: \breath36, follow: \breath36, tornado: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
+~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36, solo: \breath36, follow: \breath36, tornado: \tornado);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
 
 s = Server.default;
 // sample rates (2026-10-02): before anything boots, put the default INPUT back on the MacBook mic (a headset that is the default

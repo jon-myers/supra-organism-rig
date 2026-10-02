@@ -35,7 +35,7 @@ s.waitForBoot { fork {
 	// ---- tear down a previous evaluation ----
 	{ ~tnWin !? { if (~tnWin.isClosed.not) { ~tnWin.onClose = nil; ~tnWin.close } } }.defer;
 	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnGrp !? { ~tnGrp.free };
-	~tnAllBufs !? { ~tnAllBufs.do(_.free) }; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
+	~tnAllBufs !? { ~tnAllBufs.do(_.free) }; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free; MIDIdef(\tncc).free; MIDIdef(\tnnote).free;
 	~tnBus !? { ~tnBus.free }; ~tnBus = Bus.audio(s, 4); ~tnDummy4 !? { ~tnDummy4.free }; ~tnDummy4 = Bus.audio(s, 4);
 	~tnZero !? { ~tnZero.free }; ~tnZero = Bus.control(s, 14).setn(0 ! 14);
 
@@ -72,6 +72,7 @@ s.waitForBoot { fork {
 	{
 		var nb = { |key, lo, hi, step, dec, w = 52| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec).value_(~tnP[key]).fixedWidth_(w).action_({ |b| ~tnP[key] = b.value }) };
 		var big = Font.default.size_(15).boldVariant;
+		~tnBoxes = ();
 		~tnWin = if (~stHost.notNil) { ~stHost.(\tornado) } { Window("TORNADO -- the ending, live", Rect(80, 60, 1000, 600)).front };
 		~uiPending = ~uiPending ? IdentityDictionary.new; ~uiLater = ~uiLater ? { |key, fn| ~uiPending[key] = fn };
 		if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
@@ -96,13 +97,13 @@ s.waitForBoot { fork {
 		~tnWin.layout = VLayout(
 			HLayout(~tnRunBtn, ~tnCutBtn, ~tnInfo, nil),
 			HLayout(~tnBuildTxt, [~tnBuild, stretch: 1]),
-			HLayout(~tnAutoBox, nb.(\autoMin, 0.2, 60, 0.5, 1), StaticText().string_("min"), ~tnHoldBtn, ~tnClimaxBtn, nb.(\climaxS, 1, 300, 1, 0), StaticText().string_("s"),
+			HLayout(~tnAutoBox, (~tnBoxes[\autoMin] = nb.(\autoMin, 0.2, 60, 0.5, 1)), StaticText().string_("min"), ~tnHoldBtn, ~tnClimaxBtn, (~tnBoxes[\climaxS] = nb.(\climaxS, 1, 300, 1, 0)), StaticText().string_("s"),
 				Button().states_([["0 %"]]).fixedWidth_(46).action_({ ~tnGlide = nil; ~tnX = 0 }), Button().states_([["50 %"]]).fixedWidth_(50).action_({ ~tnGlide = nil; ~tnX = 0.5 }),
 				Button().states_([["80 %"]]).fixedWidth_(50).action_({ ~tnGlide = nil; ~tnX = 0.8 }), nil),
-			HLayout(StaticText().string_("MASTER"), [~tnMaster, stretch: 1], ~tnMasterTxt, StaticText().string_("fade s"), nb.(\fade, 0.1, 120, 0.5, 1), ~tnFadeIn, ~tnFadeOut, ~tnAmbiBox),
-			HLayout(StaticText().string_("levels dB:"), StaticText().string_("lines"), nb.(\lines, -40, 12, 1, 0), StaticText().string_("percussion"), nb.(\perc, -40, 12, 1, 0),
-				StaticText().string_("harmonium"), nb.(\harm, -40, 12, 1, 0), StaticText().string_("birds"), nb.(\birds, -40, 12, 1, 0), StaticText().string_("snatches"), nb.(\snatch, -40, 12, 1, 0),
-				StaticText().string_("jolt sens"), NumberBox().clipLo_(0.1).clipHi_(5).step_(0.1).decimals_(1).value_(~tnP[\sens]).fixedWidth_(46).action_({ |b| ~tnP[\sens] = b.value; ~tnJolt.set(\sens, b.value) }), nil),
+			HLayout(StaticText().string_("MASTER"), [~tnMaster, stretch: 1], ~tnMasterTxt, StaticText().string_("fade s"), (~tnBoxes[\fade] = nb.(\fade, 0.1, 120, 0.5, 1)), ~tnFadeIn, ~tnFadeOut, ~tnAmbiBox),
+			HLayout(StaticText().string_("levels dB:"), StaticText().string_("lines"), (~tnBoxes[\lines] = nb.(\lines, -40, 12, 1, 0)), StaticText().string_("percussion"), (~tnBoxes[\perc] = nb.(\perc, -40, 12, 1, 0)),
+				StaticText().string_("harmonium"), (~tnBoxes[\harm] = nb.(\harm, -40, 12, 1, 0)), StaticText().string_("birds"), (~tnBoxes[\birds] = nb.(\birds, -40, 12, 1, 0)), StaticText().string_("snatches"), (~tnBoxes[\snatch] = nb.(\snatch, -40, 12, 1, 0)),
+				StaticText().string_("jolt sens"), (~tnBoxes[\sens] = NumberBox().clipLo_(0.1).clipHi_(5).step_(0.1).decimals_(1).value_(~tnP[\sens]).fixedWidth_(46).action_({ |b| ~tnP[\sens] = b.value; ~tnJolt !? { ~tnJolt.set(\sens, b.value) } })), nil),
 			~tnStatus,
 			StaticText().string_("BUILD = where the ending is (0 = the start, 100 % = the climax). Stay at 100 % (or HOLD) as long as you like, then FADE OUT or HARD CUT. The dancers' jolts drive the percussion; needs the FORCE tab on the live OSC."),
 			nil);
@@ -115,7 +116,8 @@ s.waitForBoot { fork {
 					++ "   voices " ++ s.numSynths ++ "   motion " ++ (~tnAct * 100).round.asInteger ++ " %   out peak " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" });
 			1.wait } }.play(AppClock);
 		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
-			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free };
+			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
+			MIDIdef(\tncc).free; MIDIdef(\tnnote).free; ~mkOwners !? { ~mkOwners.remove(\tornado); if (~mkOwner == \tornado) { ~mkOwner = ~mkOwners.first } } };
 	}.defer;
 	// ---- buffers (about 1.3 GB, loaded in the background; START waits for it) ----
 	rd = { |rel, ch| var b = Buffer.read(s, ~tnRoot +/+ rel); n = n + 1; ~tnAllBufs = ~tnAllBufs.add(b); if (n % 60 == 0) { s.sync; ~uiLater.(\tnLoad, { ~tnInfo !? { ~tnInfo.string = "loading " ++ n ++ " / " ++ total } }) }; b };
@@ -239,6 +241,47 @@ s.waitForBoot { fork {
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
 	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)) };
 
+	// ---- nanoKONTROL2 (2026-10-02): shared like the other tabs (TRACK < > passes it on; selecting this tab takes it) ----
+	//   fader 1 BUILD   fader 2 MASTER   faders 3-7 levels (lines, percussion, harmonium, birds, snatches: -36 .. +6 dB)   fader 8 jolt sens
+	//   knob 1 AUTO minutes (0.5-15)   knob 2 CLIMAX glide s (2-90)   knob 3 fade s (0.5-30)
+	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> climax   << auto on/off   SET fade out   MARKER < fade in
+	~mkOwners = (~mkOwners ? []).add(\tornado).asSet.asArray;
+	~tnLast = IdentityDictionary.new; ~tnCaught = IdentityDictionary.new; ~tnHeld = IdentityDictionary.new; ~tnWay = IdentityDictionary.new; ~tnPend = IdentityDictionary.new;
+	~tnCatch = { |cc, v, cur| var last = ~tnLast[cc], caught = ~tnCaught[cc] ? false;   // soft takeover (as breath36 / rite)
+		if (caught.not) { if (((v - cur).abs < 0.03) or: { last.notNil and: { (last - cur).sign != (v - cur).sign } }) { caught = true } };
+		~tnLast[cc] = v; ~tnCaught[cc] = caught; caught };
+	~tnSteady = { |cc, val| var held = ~tnHeld[cc], d, go = false;               // jitter filter (as breath36 / rite)
+		if (held.isNil) { ~tnHeld[cc] = val; go = true } { d = val - held;
+			case { d == 0 } { ~tnPend[cc] = nil } { d.sign == (~tnWay[cc] ? 0) } { go = true; ~tnPend[cc] = nil }
+				{ d.abs >= 4 and: { ~tnPend[cc] == d.sign } } { go = true; ~tnPend[cc] = nil } { d.abs >= 4 } { ~tnPend[cc] = d.sign } { ~tnPend[cc] = nil };
+			if (go) { ~tnHeld[cc] = val; ~tnWay[cc] = d.sign } }; go };
+	~tnDbOf = { |v| -36 + (42 * v) }; ~tnVOfDb = { |db| ((db + 36) / 42).clip(0, 1) };
+	~tnSetBox = { |key, val| ~tnP[key] = val; ~uiLater.(("tnBox" ++ key).asSymbol, { ~tnBoxes[key] !? { |b| b.value = val } }) };
+	~tnButton = { |num| case
+		{ num == 41 } { { ~tnRunBtn.value = 1 }.defer; ~tnStart.() }
+		{ num == 42 } { { ~tnRunBtn.value = 0 }.defer; ~tnStop.() }
+		{ num == 45 } { ~tnHardCut.(); { ~tnRunBtn.value = 0 }.defer }
+		{ num == 46 } { ~tnHold = ~tnHold.not; if (~tnHold) { ~tnGlide = nil }; { ~tnHoldBtn.value = ~tnHold.asInteger }.defer }
+		{ num == 44 } { ~tnHold = false; { ~tnHoldBtn.value = 0 }.defer; ~tnGlideTo.(1, ~tnP[\climaxS]) }
+		{ num == 43 } { ~tnAuto = ~tnAuto.not; { ~tnAutoBox.value = ~tnAuto }.defer }
+		{ num == 60 } { ~tnFade.(0, ~tnP[\fade]) }
+		{ num == 61 } { ~tnFade.(~tnMasterAmp.(), ~tnP[\fade]) } };
+	MIDIClient.init(verbose: false); MIDIIn.connectAll(verbose: false);
+	MIDIdef.cc(\tncc, { |val, cc| var v = val / 127;
+		if (~mkOwner == \tornado) {
+			case
+			{ cc == 0 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, ~tnX) }) { ~tnGlide = nil; ~tnX = v } }
+			{ cc == 1 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, (~tnP[\master].dbamp / 2).sqrt.min(1)) }) {
+				var a = 2 * v.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) };
+				~uiLater.(\tnKM, { ~tnMaster.value = v; ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) } }
+			{ (cc >= 2) and: { cc <= 6 } } { var key = [\lines, \perc, \harm, \birds, \snatch][cc - 2];
+				if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, ~tnVOfDb.(~tnP[key])) }) { ~tnSetBox.(key, ~tnDbOf.(v).round(0.5)) } }
+			{ cc == 7 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, (~tnP[\sens] / 0.25).log / 12.log) }) { var sv = 0.25 * (12 ** v); ~tnSetBox.(\sens, sv.round(0.05)); ~tnJolt !? { ~tnJolt.set(\sens, sv) } } }
+			{ cc == 16 } { ~tnSetBox.(\autoMin, (0.5 * (30 ** v)).round(0.1)) }
+			{ cc == 17 } { ~tnSetBox.(\climaxS, (2 * (45 ** v)).round(1)) }
+			{ cc == 18 } { ~tnSetBox.(\fade, (0.5 * (60 ** v)).round(0.1)) }
+			{ (val > 0) and: { [41, 42, 43, 44, 45, 46, 60, 61].includes(cc) } } { ~tnButton.(cc) } } }).permanent_(true);
+	MIDIdef.noteOn(\tnnote, { |vel, note| if (~mkOwner == \tornado) { ~tnButton.(note) } }).permanent_(true);
 	"TORNADO_ENGINE_READY".postln;
 } };
 )
