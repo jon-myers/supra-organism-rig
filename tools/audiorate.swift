@@ -8,6 +8,7 @@
 //                                      Multi-Output Device (+ members) -> rate (default 44100), then list
 //   audiorate rates "<name>"           the rates a device offers right now
 //   audiorate stereo "<name>" [L R]    show / set the output pair a Multi-Output or a plain stereo app plays into
+//   audiorate inears                   Multi-Output = MacBook Pro Speakers (clock, muted) + its headsets, Fireface out
 //   audiorate prune | restore          take Multi-Output members stuck in call mode out (saved) / put the saved list back
 // Build: swiftc -O audiorate.swift -o ~/.local/bin/audiorate
 import CoreAudio
@@ -93,6 +94,31 @@ case "stereo":   // audiorate stereo "<name>" [L R]: show / set the output pair 
         var ch: [UInt32] = [l, r]; let st = AudioObjectSetPropertyData(d, &pa, 0, nil, 8, &ch); if st != noErr { print("FAILED (\(st))") } }
     var ch: [UInt32] = [0, 0]; var csz = UInt32(8); AudioObjectGetPropertyData(d, &pa, 0, nil, &csz, &ch)
     print("\(name(d)): stereo output = channels \(ch[0])/\(ch[1])")
+case "inears":
+    // the in-ear Multi-Output for the rig (2026-10-02): MacBook Pro Speakers as the CLOCK (always 44.1/48 k, unlike a Bluetooth
+    // headset in call mode) and MUTED, plus every Bluetooth headset already in it; the Fireface taken OUT (a Multi-Output plays
+    // into each member's first channels, so the metronome came out of Fireface 1/2). Old member list saved for `restore`.
+    guard let mo = find("Multi-Output"), let spk = find("MacBook Pro Speakers", wantIn: false) else { print("need the Multi-Output Device and MacBook Pro Speakers"); exit(2) }
+    let save = ("~/.local/state/audiorate_multioutput_members.txt" as NSString).expandingTildeInPath
+    var fa = addr(kAudioAggregateDevicePropertyFullSubDeviceList); var cur: CFArray? = nil; var sz = UInt32(MemoryLayout<CFArray?>.size)
+    _ = withUnsafeMutablePointer(to: &cur) { AudioObjectGetPropertyData(mo, &fa, 0, nil, &sz, $0) }
+    let uids = (cur as? [String]) ?? []
+    try? FileManager.default.createDirectory(atPath: (save as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try? uids.joined(separator: "\n").write(toFile: save, atomically: true, encoding: .utf8)
+    let spkUID = str(spk, kAudioDevicePropertyDeviceUID)
+    let ffUIDs = devices().filter { name($0).hasPrefix("Fireface") }.map { str($0, kAudioDevicePropertyDeviceUID) }
+    var want = [spkUID] + uids.filter { $0 != spkUID && !ffUIDs.contains($0) }
+    var arr = want as CFArray
+    var st = withUnsafeMutablePointer(to: &arr) { AudioObjectSetPropertyData(mo, &fa, 0, nil, UInt32(MemoryLayout<CFArray>.size), $0) }
+    print(st == noErr ? "members: MacBook Pro Speakers + \(want.count - 1) headset(s), Fireface out" : "FAILED to set members (\(st))")
+    usleep(800_000)
+    var ca = addr(kAudioAggregateDevicePropertyMainSubDevice); var clk = spkUID as CFString
+    st = withUnsafeMutablePointer(to: &clk) { AudioObjectSetPropertyData(mo, &ca, 0, nil, UInt32(MemoryLayout<CFString>.size), $0) }
+    print(st == noErr ? "clock: MacBook Pro Speakers" : "FAILED to set the clock (\(st))")
+    var ma = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+    var one: UInt32 = 1; st = AudioObjectSetPropertyData(spk, &ma, 0, nil, 4, &one)
+    print(st == noErr ? "MacBook Pro Speakers: muted" : "could not mute the MacBook speakers (\(st)) -- turn their volume down")
+    _ = setRate(mo, 48000); want.removeAll(); usleep(500_000); list()
 case "prune", "restore":
     // prune: take members stuck in call mode (output offers neither 44.1 k nor 48 k) OUT of the Multi-Output Device, saving
     // the old member list; restore: put the saved list back. Uses kAudioAggregateDevicePropertyFullSubDeviceList (UIDs).
