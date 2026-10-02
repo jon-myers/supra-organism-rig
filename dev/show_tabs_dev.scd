@@ -27,12 +27,12 @@ close/teardown runs). Patches load one after another, breath36 last (~15 s).
 (
 // nowExecutingPath is nil when this is run from an unsaved / untitled document (2026-10-01): fall back to the known location
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/show_tabs_dev.scd".standardizePath).pathOnly;
-var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "rite_live.scd", force: "../force_hub.scd", breath36: "breath36.scd", fbreath: "force_breath.scd", ambi: "ambi.scd", concat: "concat_live.scd", solo: "stems_live.scd");
-var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players", fbreath: "~fbGrid", ambi: "~ambiQuadSyn", concat: "~clRunBtn", solo: "~soPlayBtn");
-var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \ambi, \concat, \solo];   // ambi after breath36 (reads ~b36Meta)
-~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath, \ambi, \concat, \solo];                        // tab order (10th = key 0)
-~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE", fbreath: "BREATH FORCE", ambi: "AMBI", concat: "CONCAT", solo: "SOLO (particles)");
-~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36, solo: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
+var files = (metro: "metro_dual.scd", wall: "wall_live.scd", sweep: "sweep_sync.scd", rite: "rite_live.scd", force: "../force_hub.scd", breath36: "breath36.scd", fbreath: "force_breath.scd", ambi: "ambi.scd", concat: "concat_live.scd", solo: "stems_live.scd", follow: "tornado_live.scd");
+var ready = (metro: "~msWin", wall: "~wlSliders", sweep: "~swSetMenu", rite: "~rtFaders", force: "~fhMeters", breath36: "~b36Players", fbreath: "~fbGrid", ambi: "~ambiQuadSyn", concat: "~clRunBtn", solo: "~soPlayBtn", follow: "~fwPlayBtn");
+var loadOrder = [\metro, \wall, \sweep, \rite, \force, \breath36, \fbreath, \ambi, \concat, \solo, \follow];   // ambi after breath36 (reads ~b36Meta)
+~stNames = [\breath36, \sweep, \wall, \metro, \rite, \force, \fbreath, \ambi, \concat, \solo, \follow];                        // tab order (10th = key 0, 11th = key -)
+~stLabels = (breath36: "36 BREATHS", sweep: "PHANTOM PAIN SWEEP", wall: "WALL OF SOUND", metro: "METRONOME", rite: "RITE OF SPRING", force: "FORCE", fbreath: "BREATH FORCE", ambi: "AMBI", concat: "CONCAT", solo: "SOLO (particles)", follow: "FOLLOW (tornado)");
+~stOwnerFor = (breath36: \breath36, sweep: \sweep, wall: \wall, metro: nil, rite: \rite, force: \force, fbreath: \breath36, ambi: \breath36, concat: \breath36, solo: \breath36, follow: \breath36);   // BREATH FORCE: the Korg keeps playing the breaths (the centres)   // metro has no controller mapping
 
 s = Server.default;
 if (s.serverRunning.not) {
@@ -64,7 +64,7 @@ if (s.serverRunning.not) {
 	~stStack.index = i; ~stButtons.do { |b, j| b.value = (j == i).asInteger };
 	~stOwnerFor[name] !? { |o| ~mkOwners = (~mkOwners ? []).add(o).asSet.asArray; ~mkOwner = o };
 	~stCurrent = name };
-~stWin.view.keyDownAction = { |v, char| var i = "1234567890".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
+~stWin.view.keyDownAction = { |v, char| var i = "1234567890-".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
 // a patch asks for its panel: give it a fresh child view in its tab (it closes the old one itself on reload)
 // (2026-10-02) inside a vertical ScrollView, so a tall patch (breath36) can be scrolled instead of running off the screen; a reload
 // removes the tab's previous scroller.

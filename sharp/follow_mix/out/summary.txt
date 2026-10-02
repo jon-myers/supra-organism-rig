@@ -1,0 +1,224 @@
+{
+ "run 16:44-17:47": {
+  "DC steps (>0.15 in 5 s) per sensor": [
+   32,
+   51,
+   62,
+   52,
+   35,
+   32,
+   7
+  ],
+  "AC raw  lag 20 s (first try)": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 5.73,
+   "mean_evenness": 0.924,
+   "most_dominant_share_p95": 0.502,
+   "share_speed_per_s": 0.1032,
+   "follows_own_sensor_r": 0.527,
+   "tau_median_s": 20.0
+  },
+  "AC activity  lag 30 s": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 4.68,
+   "mean_evenness": 0.883,
+   "most_dominant_share_p95": 0.647,
+   "share_speed_per_s": 0.072,
+   "follows_own_sensor_r": 0.593,
+   "tau_median_s": 30.0
+  },
+  "AC activity  lag 60 s": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 3.32,
+   "mean_evenness": 0.907,
+   "most_dominant_share_p95": 0.554,
+   "share_speed_per_s": 0.0456,
+   "follows_own_sensor_r": 0.515,
+   "tau_median_s": 60.0
+  },
+  "AC activity  lag 60->10 s by sensor 7": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 3.86,
+   "mean_evenness": 0.873,
+   "most_dominant_share_p95": 0.69,
+   "share_speed_per_s": 0.0722,
+   "follows_own_sensor_r": 0.596,
+   "tau_median_s": 35.9
+  },
+  "DC  lag 30 s": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 0.74,
+   "mean_evenness": 0.916,
+   "most_dominant_share_p95": 0.471,
+   "share_speed_per_s": 0.0178,
+   "follows_own_sensor_r": 0.725,
+   "tau_median_s": 30.0
+  },
+  "DC  lag 60->10 s by sensor 7": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 0.71,
+   "mean_evenness": 0.915,
+   "most_dominant_share_p95": 0.472,
+   "share_speed_per_s": 0.019,
+   "follows_own_sensor_r": 0.73,
+   "tau_median_s": 35.9
+  },
+  "DC change  lag 30 s": {
+   "minutes": 63.5,
+   "leader_changes_per_min": 5.98,
+   "mean_evenness": 0.957,
+   "most_dominant_share_p95": 0.417,
+   "share_speed_per_s": 0.1028,
+   "follows_own_sensor_r": 0.318,
+   "tau_median_s": 30.0
+  }
+ },
+ "morning 10:41-11:37": {
+  "DC steps (>0.15 in 5 s) per sensor": [
+   43,
+   45,
+   58,
+   45,
+   24,
+   31,
+   7
+  ],
+  "AC raw  lag 20 s (first try)": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 5.2,
+   "mean_evenness": 0.861,
+   "most_dominant_share_p95": 0.601,
+   "share_speed_per_s": 0.0998,
+   "follows_own_sensor_r": 0.639,
+   "tau_median_s": 20.0
+  },
+  "AC activity  lag 30 s": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 4.59,
+   "mean_evenness": 0.857,
+   "most_dominant_share_p95": 0.665,
+   "share_speed_per_s": 0.0729,
+   "follows_own_sensor_r": 0.65,
+   "tau_median_s": 30.0
+  },
+  "AC activity  lag 60 s": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 3.16,
+   "mean_evenness": 0.876,
+   "most_dominant_share_p95": 0.599,
+   "share_speed_per_s": 0.0462,
+   "follows_own_sensor_r": 0.589,
+   "tau_median_s": 60.0
+  },
+  "AC activity  lag 60->10 s by sensor 7": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 3.95,
+   "mean_evenness": 0.846,
+   "most_dominant_share_p95": 0.691,
+   "share_speed_per_s": 0.0746,
+   "follows_own_sensor_r": 0.651,
+   "tau_median_s": 36.2
+  },
+  "DC  lag 30 s": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 1.07,
+   "mean_evenness": 0.913,
+   "most_dominant_share_p95": 0.501,
+   "share_speed_per_s": 0.0203,
+   "follows_own_sensor_r": 0.79,
+   "tau_median_s": 30.0
+  },
+  "DC  lag 60->10 s by sensor 7": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 1.09,
+   "mean_evenness": 0.912,
+   "most_dominant_share_p95": 0.506,
+   "share_speed_per_s": 0.0216,
+   "follows_own_sensor_r": 0.793,
+   "tau_median_s": 36.2
+  },
+  "DC change  lag 30 s": {
+   "minutes": 56.0,
+   "leader_changes_per_min": 5.48,
+   "mean_evenness": 0.948,
+   "most_dominant_share_p95": 0.429,
+   "share_speed_per_s": 0.1053,
+   "follows_own_sensor_r": 0.365,
+   "tau_median_s": 30.0
+  }
+ },
+ "midday 12:05-13:00": {
+  "DC steps (>0.15 in 5 s) per sensor": [
+   18,
+   6,
+   27,
+   7,
+   9,
+   35,
+   5
+  ],
+  "AC raw  lag 20 s (first try)": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 3.84,
+   "mean_evenness": 0.879,
+   "most_dominant_share_p95": 0.623,
+   "share_speed_per_s": 0.0805,
+   "follows_own_sensor_r": 0.582,
+   "tau_median_s": 20.0
+  },
+  "AC activity  lag 30 s": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 2.13,
+   "mean_evenness": 0.916,
+   "most_dominant_share_p95": 0.655,
+   "share_speed_per_s": 0.0382,
+   "follows_own_sensor_r": 0.595,
+   "tau_median_s": 30.0
+  },
+  "AC activity  lag 60 s": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 1.51,
+   "mean_evenness": 0.923,
+   "most_dominant_share_p95": 0.619,
+   "share_speed_per_s": 0.0248,
+   "follows_own_sensor_r": 0.55,
+   "tau_median_s": 60.0
+  },
+  "AC activity  lag 60->10 s by sensor 7": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 2.38,
+   "mean_evenness": 0.91,
+   "most_dominant_share_p95": 0.688,
+   "share_speed_per_s": 0.0439,
+   "follows_own_sensor_r": 0.602,
+   "tau_median_s": 40.6
+  },
+  "DC  lag 30 s": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 0.35,
+   "mean_evenness": 0.829,
+   "most_dominant_share_p95": 0.601,
+   "share_speed_per_s": 0.0113,
+   "follows_own_sensor_r": 0.753,
+   "tau_median_s": 30.0
+  },
+  "DC  lag 60->10 s by sensor 7": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 0.31,
+   "mean_evenness": 0.828,
+   "most_dominant_share_p95": 0.601,
+   "share_speed_per_s": 0.0137,
+   "follows_own_sensor_r": 0.754,
+   "tau_median_s": 40.6
+  },
+  "DC change  lag 30 s": {
+   "minutes": 55.0,
+   "leader_changes_per_min": 3.4,
+   "mean_evenness": 0.964,
+   "most_dominant_share_p95": 0.403,
+   "share_speed_per_s": 0.078,
+   "follows_own_sensor_r": 0.33,
+   "tau_median_s": 30.0
+  }
+ }
+}

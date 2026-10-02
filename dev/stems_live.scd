@@ -25,7 +25,7 @@ var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/project
 ~soRoot = here +/+ ".." +/+ ".." +/+ "concatenator-corpus" +/+ "out" +/+ "stems";
 ~soMax = 20;
 ~soOutBus = ~soOutBus ? 0;
-~soP = ~soP ? (set: 0, mode: 0, src: 0, sens: 5, rise: 0.15, fall: 1.5, floorDb: -60, minN: 2, master: 0, ambi: true, scatter: false, seed: 1);
+~soP = ~soP ? (set: 0, mode: 0, src: 0, sens: 1.5, rise: 0.15, fall: 1.5, floorDb: -60, minN: 2, master: 0, ambi: true, scatter: false, seed: 1);
 s = Server.default;
 s.waitForBoot { fork {
 	// ---- tear down a previous evaluation ----
@@ -78,9 +78,10 @@ s.waitForBoot { fork {
 		("stems: " ++ take ++ " / " ++ set ++ ": " ++ fs.size ++ " stems, " ++ ~soDur.round(0.1) ++ " s").postln;
 		{ ~soInfo.string_(take ++ " / " ++ set ++ ": " ++ fs.size ++ " stems, " ++ ~soDur.round(0.1) ++ " s"); ~soLabel.() }.defer } };
 
-	~soSyn = Synth.tail(s, \soStems, [\bufs, ~soSilent.bufnum ! ~soMax, \frames, 1, \run, 0, \out, ~soOutBus,
+	~soSyn = Synth.head(s, \soStems, [\bufs, ~soSilent.bufnum ! ~soMax, \frames, 1, \run, 0, \out, ~soOutBus,
 		\fbus, (~fhBus !? (_.index)) ? 0, \ambi, 0, \abus, ~soDummy4.index, \master, ~soP[\master].dbamp, \mode, ~soP[\mode], \src, ~soP[\src],
 		\sens, ~soP[\sens], \rise, ~soP[\rise], \fall, ~soP[\fall], \floor, ~soP[\floorDb].dbamp * (~soP[\floorDb] > -60).asInteger, \minN, ~soP[\minN]]);
+	// at the HEAD (2026-10-02): the AMBI tab decodes in a group at the tail; a writer after it would never be heard
 	~soPlaying = false; ~soNames = [];
 	~soSetAmbi = { |on| var a = on and: { ~ambiBus.notNil }; ~soP[\ambi] = on;
 		~soSyn.set(\ambi, a.asInteger, \abus, if (a) { ~ambiBus.index } { ~soDummy4.index });

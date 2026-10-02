@@ -30,7 +30,8 @@ nanoKONTROL2 (factory CC map, soft takeover on every fader/knob):
                (faders 1-4 five voices, 5-8 four; with the voices tiled a/g/r/s, each fader is ONE performer).
                Before 2026-10-01: a BLOCK of consecutive voices: 4 5 4 5 4 5 4 5 (= 36),
                i.e. slider 1 = voices 1-4, 2 = 5-9, 3 = 10-13, ... 8 = 32-36 (voices are tiled a/g/r/s)
-  S / M        solo / mute that group      R1  re-roll speed offsets      CYCLE  link all sliders
+  S / M        solo / mute that group      R 1-8  FORCE on/off for that group (2026-10-02; off at every load)
+  << (REW)     re-roll speed offsets (was R1)      REC  PULSE on/off      >> (FF)  OCEAN on/off      CYCLE  link all sliders
   knobs 1-8  FORCE offset depth of fader group g (sensors 1-6 -> groups 1-6, CENTRAL -> 7, 8 none) (2026-10-01;
              volume / gap / voices / speed / spread / glide / fade / nCVI are on screen only. Was: 1 voices, 2 speed
              level, 3 spread, 4 glide, 5 volume, 6 fade, 7 gap, 8 nCVI)
@@ -642,7 +643,7 @@ s.waitForBoot {
 		};
 		~mkLast[cc] = v; ~mkCaught[cc] = caught; caught;
 	};
-	~mkCC = (sliders: (0..7), knobs: (16..23), sBtn: (32..39), mBtn: (48..55), rBtn: (64..71), play: 41, stop: 42, cycle: 46);
+	~mkCC = (sliders: (0..7), knobs: (16..23), sBtn: (32..39), mBtn: (48..55), rBtn: (64..71), play: 41, stop: 42, cycle: 46, rew: 43, ff: 44, rec: 45);
 	~mkGroupMorph = { |g| var vs = ~mkGroupVoices[g]; if (vs.isEmpty) { 0 } { vs.collect { |i| ~b36Morph[i] }.mean } };
 	// sound follows every fader message; the on-screen sliders catch up in the 4-per-second GUI tick (~b36Rout)
 	~mkSetGroup = { |g, v| (if (~mkLink) { (0..(nv - 1)) } { ~mkGroupVoices[g] }).do { |i| ~b36SetMorph.(i, v) }; ~b36SliderSync = true;
@@ -659,7 +660,13 @@ s.waitForBoot {
 		var g;
 		g = ~mkCC.sBtn.indexOf(num); g !? { ~mkGroupVoices[g].do { |i| ~b36Solo[i] = ~b36Solo[i].not }; ~b36ApplyOn.() };
 		g = ~mkCC.mBtn.indexOf(num); g !? { ~mkGroupVoices[g].do { |i| ~b36Mute[i] = ~b36Mute[i].not }; ~b36ApplyOn.() };
-		if (num == ~mkCC.rBtn[0]) { ~spRollOffsets.(~spP.spread, Date.getDate.rawSeconds.asInteger) };
+		// R1-R8 (2026-10-02, Jon): FORCE on/off for fader group g (the "on" box above each group; off at every load)
+		g = ~mkCC.rBtn.indexOf(num); g !? { ~b36F[\on][g] = ~b36F[\on][g].not; ~b36FApply.(g);
+			~uiLater.(("mkFT" ++ g).asSymbol, { ~b36FToggles[g] !? { |c| c.value = ~b36F[\on][g] };
+				~b36FKText[g] !? { |t| t.string = "+-" ++ (~b36FAmt.(g) * 100).round.asInteger ++ "%" } }) };
+		if (num == ~mkCC[\rew]) { ~spRollOffsets.(~spP.spread, Date.getDate.rawSeconds.asInteger) };   // was R1
+		if (num == ~mkCC[\rec]) { ~b36PulseBox !? { |b| var on = b.value.not; ~b36PulseSet.(on); ~uiLater.(\mkPulse, { b.value = on }) } };
+		if (num == ~mkCC[\ff]) { ~b36OcBox !? { |b| var on = b.value.not; ~b36OcSet.(on); ~uiLater.(\mkOcean, { b.value = on }) } };
 		if (num == ~mkCC[\play]) { ~b36Set.(~mkLastN.max(1)); ~b36Slider.value = ~b36N / nv };
 		if (num == ~mkCC[\stop]) { if (~b36N > 0) { ~mkLastN = ~b36N }; ~b36Set.(0); ~b36Slider.value = 0 };
 		if (num == ~mkCC.cycle) { ~mkLink = ~mkLink.not; ~mkStatus.string = "nanoKONTROL2: connected" ++ if (~mkLink) { "   [sliders LINKED]" } { "" } };
