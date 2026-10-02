@@ -18,7 +18,11 @@ import render_accents as ra
 HERE = ra.HERE; OUT = ra.OUT; SR, FS = ra.SR, ra.FS; D = 180.0
 TORN = os.path.join(ra.SO, "tornado", "forann_line", "out_additive3", "forann_additive_ambiX.wav")
 HARM = os.path.join(ra.SO, "concatenator-corpus", "corpus", "v7-harmonium-all")
-rng = np.random.default_rng(23)
+# PROFILE (env T3_PROFILE): "flat" = the first 3-min render; "steep" (2026-10-02, Jon: "the temporal density of percussion stuff
+# doesn't build up big enough ... stays a bit too flat") = jolts turn into rolls, the swarm and heartbeat pile into the end,
+# phrases overlap, a steeper crescendo, and the percussion ends ABOVE the tornado
+STEEP = os.environ.get("T3_PROFILE", "steep") == "steep"
+rng = np.random.default_rng(23); EVENTS = []   # (time, layer) of every event, for the timeline page
 NOTE = {"C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3, "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8, "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11}
 
 def driver():
@@ -69,38 +73,41 @@ def render():
         if m > 0:
             for c, off in ((0, spread), (1, -spread)): buf[i:i + m] += ra.enc(y[:m, c] * gain, az + off)
     pick = lambda names: (lambda pool: pool[rng.integers(len(pool))])([y for c in names for y in cats.get(c, [])])
-    cres = lambda x: 10 ** ((-10 + 10 * x) / 20)
-    inc = lambda k: cnt.__setitem__(k, cnt.get(k, 0) + 1)
+    cres = (lambda x: 10 ** ((-22 + 22 * x ** 1.5) / 20)) if STEEP else (lambda x: 10 ** ((-10 + 10 * x) / 20))
+    inc = lambda k, t: (cnt.__setitem__(k, cnt.get(k, 0) + 1), EVENTS.append((round(float(t), 3), k)))
     chords, notes = harm_sources()
     for t, k, st in hits:
         x = t / D; az = np.radians(k * 60 + rng.uniform(-15, 15)) if k < 6 else rng.uniform(0, 2 * np.pi); v = min(1.0, 0.45 + 0.25 * st)
-        if rng.random() < 0.4 + 0.6 * x: place(A, pick(["klatter_hi", "klatter_mid", "art_klatter", "boops"]), t, az, 0.5 * v * cres(x)); inc("klatter")
-        if x >= 0.15 and st > 1.3 and rng.random() < 0.6: place(A, pick(["thud", "art_thud", "fry"]), t + 0.004, az, 0.6 * v * cres(x)); inc("thud")
-        if x >= 0.3 and (st > 1.8 or k == 6) and rng.random() < 0.35 + 0.65 * x: place(A, pick(["art_boom", "art_boom", "kick"]), t, az, 0.8 * v * cres(x), 0.3); inc("boom")
+        if rng.random() < ((0.15 + 0.85 * x) if STEEP else (0.4 + 0.6 * x)):
+            reps = 1 + (rng.poisson(7 * x ** 2.2) if STEEP else 0)          # late jolts become flams and rolls
+            for r in range(reps):
+                tt = t + r * rng.uniform(0.018, 0.055); place(A, pick(["klatter_hi", "klatter_mid", "art_klatter", "boops"]), tt, az + rng.uniform(-0.2, 0.2), 0.5 * v * cres(x) * (0.85 ** r)); inc("klatter", tt)
+        if x >= 0.15 and st > 1.3 and rng.random() < 0.6: place(A, pick(["thud", "art_thud", "fry"]), t + 0.004, az, 0.6 * v * cres(x)); inc("thud", t)
+        if x >= 0.3 and (st > (1.4 if STEEP else 1.8) or k == 6) and rng.random() < 0.35 + 0.65 * x: place(A, pick(["art_boom", "art_boom", "kick"]), t, az, 0.8 * v * cres(x), 0.3); inc("boom", t)
         if x >= 0.6 and st > 2.2 and rng.random() < 0.5:
-            nm, cx = chords[rng.integers(len(chords))]; place2(H, excerpt(cx, rng.uniform(0.25, 0.5), 0.004, 0.08), t, az, 1.1 * cres(x)); inc("h_stab")
+            nm, cx = chords[rng.integers(len(chords))]; place2(H, excerpt(cx, rng.uniform(0.25, 0.5), 0.004, 0.08), t, az, 1.1 * cres(x)); inc("h_stab", t)
     t = 0.25 * D                                                        # kick heartbeat, accelerating hardest at the end
     while t < D - 0.2:
-        x = t / D; place(A, pick(["kick", "art_boom"]), t, rng.uniform(0, 2 * np.pi), 0.7 * cres(x), 0.2); inc("pulse")
-        y = (x - 0.25) / 0.75; t += 1.5 * (0.12 / 1.5) ** (y ** 1.6) * rng.uniform(0.92, 1.08)
+        x = t / D; place(A, pick(["kick", "art_boom"]), t, rng.uniform(0, 2 * np.pi), 0.7 * cres(x), 0.2); inc("pulse", t)
+        y = (x - 0.25) / 0.75; t += 1.5 * ((0.07 if STEEP else 0.12) / 1.5) ** (y ** 1.6) * rng.uniform(0.92, 1.08)
     t = 0.15 * D                                                        # Articulation phrases
     while t < D - 1.5:
-        x = t / D; ph = cats["art_phrase"][rng.integers(len(cats["art_phrase"]))]; place2(A, ph, t, rng.uniform(0, 2 * np.pi), 0.45 * cres(x)); inc("phrase")
-        t += 25 * (0.12 ** ((x - 0.15) / 0.85)) * rng.uniform(0.7, 1.3)
+        x = t / D; ph = cats["art_phrase"][rng.integers(len(cats["art_phrase"]))]; place2(A, ph, t, rng.uniform(0, 2 * np.pi), 0.45 * cres(x)); inc("phrase", t)
+        t += (30 * ((1.1 / 30) ** (((x - 0.15) / 0.85) ** 1.3)) if STEEP else 25 * (0.12 ** ((x - 0.15) / 0.85))) * rng.uniform(0.7, 1.3)
     t = 0.0                                                             # motion-scaled klatter swarm
     while t < D - 0.3:
         x = t / D; a = act[min(int(t * FS), len(act) - 1)]
-        if rng.random() < min(1.0, 0.35 + a): place(A, pick(["klatter_hi", "klatter_mid", "boops", "art_klatter"]), t, rng.uniform(0, 2 * np.pi), 0.3 * cres(x)); inc("swarm")
-        t += rng.exponential(1.0 / (0.5 * 30 ** (x ** 1.3)))
+        if rng.random() < min(1.0, 0.35 + a): place(A, pick(["klatter_hi", "klatter_mid", "boops", "art_klatter"]), t, rng.uniform(0, 2 * np.pi), 0.3 * cres(x)); inc("swarm", t)
+        t += rng.exponential(1.0 / ((0.2 * 200 ** (x ** 1.7)) if STEEP else (0.5 * 30 ** (x ** 1.3))))
     t = 0.12 * D                                                        # harmonium chord swells
     while t < D - 2:
         x = t / D; nm, cx = chords[rng.integers(len(chords))]; L = rng.uniform(4, 9) * (1 - 0.5 * x)
-        place2(H, excerpt(cx, L, 1.2 * (1 - 0.6 * x), 1.8 * (1 - 0.6 * x)), t, rng.uniform(0, 2 * np.pi), 0.8 * cres(x), 0.7); inc("h_swell")
+        place2(H, excerpt(cx, L, 1.2 * (1 - 0.6 * x), 1.8 * (1 - 0.6 * x)), t, rng.uniform(0, 2 * np.pi), 0.8 * cres(x), 0.7); inc("h_swell", t)
         t += 18 * ((3 / 18) ** ((x - 0.12) / 0.88)) * rng.uniform(0.7, 1.3)
     t = 0.3 * D                                                         # harmonium ladder: climbing the chromatic notes
     while t < D - 0.3:
         x = t / D; y = (x - 0.3) / 0.7; i = min(len(notes) - 1, int(y * len(notes) + rng.integers(-2, 3)))
-        i = max(0, i); place2(H, excerpt(notes[i][1], rng.uniform(0.35, 1.2) * (1 - 0.6 * y), 0.01, 0.15), t, rng.uniform(0, 2 * np.pi), 0.6 * cres(x), 0.4); inc("h_ladder")
+        i = max(0, i); place2(H, excerpt(notes[i][1], rng.uniform(0.35, 1.2) * (1 - 0.6 * y), 0.01, 0.15), t, rng.uniform(0, 2 * np.pi), 0.6 * cres(x), 0.4); inc("h_ladder", t)
         t += 1.2 * (0.15 / 1.2) ** (y ** 1.3) * rng.uniform(0.85, 1.15)
     f = np.ones(n, np.float32); m = int(0.2 * SR); f[-m:] = np.linspace(1, 0, m); A *= f[:, None]; H *= f[:, None]   # the cut
     print("events:", cnt, "| motion hits:", len(hits)); return A, H
@@ -109,7 +116,10 @@ if __name__ == "__main__":
     A, H = render(); n = len(A)
     T, sr = sf.read(TORN, dtype="float32"); T = T[:n]; Tb = np.stack([T[:, 0] / np.sqrt(2), T[:, 3], T[:, 1], T[:, 2]], 1)
     rms = lambda Y: np.sqrt((Y[-int(40 * SR):, 0] ** 2).mean()) + 1e-9
-    A *= rms(Tb) / rms(A) * 10 ** (-2 / 20); H *= rms(Tb) / rms(H) * 10 ** (-5 / 20)   # last 40 s: accents 2 dB, harmonium 5 dB under the tornado
-    ra.decode_write(Tb + A + H, "tornado3_full", n); ra.decode_write(H, "tornado3_harmonium_only", n); ra.decode_write(A, "tornado3_accents_only", n)
+    if STEEP: A *= (np.sqrt((Tb[-int(20 * SR):, 0] ** 2).mean()) / (np.sqrt((A[-int(20 * SR):, 0] ** 2).mean()) + 1e-9)) * 10 ** (1 / 20)   # last 20 s: percussion 1 dB OVER the tornado
+    else: A *= rms(Tb) / rms(A) * 10 ** (-2 / 20)                                                                                      # last 40 s: 2 dB under
+    H *= rms(Tb) / rms(H) * 10 ** (-5 / 20)
+    tag = "tornado3b" if STEEP else "tornado3"
+    ra.decode_write(Tb + A + H, f"{tag}_full", n); ra.decode_write(H, f"{tag}_harmonium_only", n); ra.decode_write(A, f"{tag}_accents_only", n)
     lv = lambda Y: [round(float(20 * np.log10(np.sqrt((Y[i * SR * 30:(i + 1) * SR * 30, 0] ** 2).mean()) + 1e-9)), 1) for i in range(6)]
     print("full mix dB per 30 s:", lv(Tb + A + H))
