@@ -123,9 +123,12 @@ if ((~msMicRate ? 0) < 8000) { ~msMicRate = 48000 };   // unreadable -> the rig'
 // main server). Otherwise: no input at all, lav off, with a warning saying why.
 ~msRateOf = { |dev| var r = try { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ dev.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger } ? 0; r };
 ~msOutRate = if (~msActualDevice.notNil) { ~msRateOf.(~msActualDevice) } { 0 };
-~msMicOK = ~msMicDevice.notNil and: { ~msOutRate == ~msMicRate };
+// what the output OFFERS (a Multi-Output offers only what every member can do; a headset in call mode offers 16-32 k only)
+~msOutOffers = if (~msActualDevice.notNil and: { File.exists("~/.local/bin/audiorate".standardizePath) }) {
+	("~/.local/bin/audiorate rates '" ++ ~msActualDevice.split($ ).first ++ "'").standardizePath.unixCmdGetStdOut.split($ ).collect(_.asInteger).select(_ > 0) } { [~msOutRate] };
+~msMicOK = ~msMicDevice.notNil and: { ~msOutOffers.includes(~msMicRate) };
 if (~msMicDevice.notNil and: { ~msMicOK.not }) {
-	("metro: LAV OFF -- '" ++ ~msActualDevice ++ "' is at " ++ ~msOutRate ++ " Hz, the Fireface at " ++ ~msMicRate ++ " Hz; opening the Fireface would re-clock it under the main server. A headset in call mode (its mic open somewhere) runs at 16-32 kHz: close whatever uses that mic, run `audiorate rig`, reload this tab.").warn };
+	("metro: LAV OFF -- '" ++ ~msActualDevice ++ "' offers only " ++ ~msOutOffers ++ " Hz, the Fireface runs at " ++ ~msMicRate ++ " Hz; opening the Fireface would re-clock it under the main server. A headset in call mode (its mic open somewhere) runs at 16-32 kHz: close whatever uses that mic, run `audiorate rig`, reload this tab.").warn };
 ~msAttempts = if (~msMicOK) { [[~msMicRate, ~msMicDevice], [nil, nil]] } {   // Fireface in only at a shared rate; else no input (no mic)
 	[[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]] };   // (rate, input): device rate first
 ~msExpectQuit = false; ~msWantRunning = true; ~msReconnects = 0;
@@ -139,7 +142,7 @@ if (~msMicDevice.notNil and: { ~msMicOK.not }) {
 		SystemClock.sched(15, { if (~msWantRunning and: { ~msServer.serverRunning.not }) { ~msTryBoot.(0) }; nil });
 	} {
 		var rate = ~msAttempts[i][0], inDev = ~msAttempts[i][1], booted = false, onBoot;
-		if (inDev.isNil and: { (~msOutRate ? 0) > 0 }) { rate = ~msOutRate };   // no input: boot at the output's own rate, change nothing
+		if (inDev.isNil) { rate = nil };   // no input: let the output run at whatever it can do (nothing else is touched)
 		~msInChans = ~msInChans ?? { ~msServer.options.numInputBusChannels.max(1) };
 		~msServer.options.sampleRate = rate; ~msServer.options.inDevice = inDev;
 		// no input device = NO INPUT AT ALL (2026-10-02): nil used to open the system default input, which was an AirPods mic --

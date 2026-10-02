@@ -58,7 +58,8 @@ func list() {
     for d in devices() {
         let i = chans(d, kAudioObjectPropertyScopeInput), o = chans(d, kAudioObjectPropertyScopeOutput)
         var tags: [String] = []; if d == di { tags.append("DEFAULT IN") }; if d == dout { tags.append("DEFAULT OUT") }
-        print(String(format: "%-34@ %6d Hz   in %2d  out %2d  %@", name(d) as NSString, Int(rate(d)), i, o, tags.joined(separator: ", ") as NSString))
+        let av = rates(d).map { String(Int($0 / 1000)) }.joined(separator: "/")
+        print("\(name(d).padding(toLength: 40, withPad: " ", startingAt: 0)) \(String(format: "%6d", Int(rate(d)))) Hz  in \(String(format: "%2d", i))  out \(String(format: "%2d", o))  offers \(av)k  \(tags.joined(separator: ", "))")
         let subs = ids(d, kAudioAggregateDevicePropertyActiveSubDeviceList)
         if !subs.isEmpty {
             let clock = str(d, kAudioAggregateDevicePropertyMainSubDevice)
@@ -70,6 +71,9 @@ func list() {
 let args = Array(CommandLine.arguments.dropFirst())
 switch args.first ?? "list" {
 case "list": list()
+case "rates":   // the rates a device offers right now (a Multi-Output only offers what EVERY member can do)
+    guard args.count == 2, let d = find(args[1]) else { print("usage: audiorate rates \"<device name>\""); exit(2) }
+    print(rates(d).map { String(Int($0)) }.joined(separator: " "))
 case "set":
     guard args.count == 3, let r = Double(args[2]), let d = find(args[1]) else { print("usage: audiorate set \"<device name>\" 48000"); exit(2) }
     exit(setRate(d, r) ? 0 : 1)
