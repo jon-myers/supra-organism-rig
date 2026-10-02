@@ -29,7 +29,7 @@ var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/project
 s = Server.default;
 s.waitForBoot { fork {
 	// ---- tear down a previous evaluation ----
-	~soWin !? { if (~soWin.isClosed.not) { ~soWin.onClose = nil; ~soWin.close } };
+	{ ~soWin !? { if (~soWin.isClosed.not) { ~soWin.onClose = nil; ~soWin.close } } }.defer;   // Qt only on the GUI thread (a reload ran this in the boot routine)
 	~soSyn !? { ~soSyn.free }; ~soSyn = nil; ~soBufs !? { ~soBufs.do { |b| b !? { b.free } } }; ~soBufs = nil;
 	OSCdef(\soMeter).free;
 	~soDummy4 !? { ~soDummy4.free }; ~soDummy4 = Bus.audio(s, 4);

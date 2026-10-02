@@ -66,7 +66,7 @@ var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", 
 	norm: 0, master: 0, ambi: true, assign: [0, 1, 2, 3, 4, 5, 0, 1]);
 s = Server.default;
 s.waitForBoot { fork {
-	~fwWin !? { if (~fwWin.isClosed.not) { ~fwWin.onClose = nil; ~fwWin.close } };
+	{ ~fwWin !? { if (~fwWin.isClosed.not) { ~fwWin.onClose = nil; ~fwWin.close } } }.defer;   // Qt only on the GUI thread
 	~fwShareSyn !? { ~fwShareSyn.free }; ~fwPlaySyn !? { ~fwPlaySyn.free }; ~fwShareSyn = nil; ~fwPlaySyn = nil;
 	~fwBufs !? { ~fwBufs.do(_.free) }; ~fwBufs = nil; OSCdef(\fwMeter).free;
 	~fwWBus !? { ~fwWBus.free }; ~fwWBus = Bus.control(s, ~fwMax);
