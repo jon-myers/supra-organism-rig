@@ -116,7 +116,8 @@ OSCdef(\mdIfBeat, { |msg, time, addr| if (addr.port == ~msServer.addr.port) { ~m
 // NEVER let this server change the Fireface's rate (2026-10-02): the MAIN server runs on the Fireface, and the old
 // [nil, Fireface] attempt let CoreAudio drag it to the Multi-Output's 32 kHz (AirPods in call mode) -> main server at 32 k,
 // AMBI's binaural decoder missing. So: the Fireface (for the lav) only at its OWN current rate; otherwise boot without the mic.
-~msMicRate = ~msMicDevice !? { |d| try { Platform.case(\osx, { ("system_profiler SPAudioDataType 2>/dev/null | grep -A4 '" ++ d.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger }) } } ? 48000;
+~msMicRate = ~msMicDevice !? { |d| try { Platform.case(\osx, { ("system_profiler SPAudioDataType 2>/dev/null | grep -A12 '" ++ d.split($ ).first ++ "' | grep 'Current SampleRate' | head -1").unixCmdGetStdOut.select(_.isDecDigit).asInteger }) } };
+if ((~msMicRate ? 0) < 8000) { ~msMicRate = 48000 };   // unreadable -> the rig's rate, never 0 (= let CoreAudio choose)
 ~msAttempts = if (~msMicDevice.notNil) { [[~msMicRate, ~msMicDevice], [nil, nil]] } {   // Fireface in at its own rate; else no input (no mic)
 	[[nil, "MacBook Pro Microphone"], [44100, "MacBook Pro Microphone"], [48000, "MacBook Pro Microphone"], [nil, nil]] };   // (rate, input): device rate first
 ~msExpectQuit = false; ~msWantRunning = true; ~msReconnects = 0;
