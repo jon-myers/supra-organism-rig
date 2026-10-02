@@ -57,6 +57,9 @@ if (s.serverRunning.not) {
 	~stOutDevice = ~stOutPrefs.collect { |p| ServerOptions.outDevices.detect { |d| d.beginsWith(p) } }.reject(_.isNil).first;
 	if (~stOutDevice.isNil) { ("NONE OF " ++ ~stOutPrefs ++ " IS CONNECTED -- main output = the Mac's default").warn };
 	s.options.outDevice = ~stOutDevice;
+	// input = the Fireface too (2026-10-02): the main server opens an input device even with 0 input channels, and the MacBook
+	// mic at 44.1 k against the Fireface at 48 k made scsynth exit silently ("exit code 0"). One device = one clock.
+	~stOutDevice !? { s.options.inDevice = ~stOutDevice };
 	s.options.sampleRate = ~stRate;   // pinned (2026-10-02): never inherit a rate a headset dragged the Fireface to (32 kHz broke AMBI's HRTFs)
 	("show_tabs_dev: main output = " ++ (~stOutDevice ? "system default")).postln;
 };
