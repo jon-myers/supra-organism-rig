@@ -37,6 +37,7 @@ var rfiles = ["mic-everything__X__part1000_pd0.50_t200_p10", "mic-harmonium__X__
 	"mic-whoosh__X__part1000_pd0.95_t50_p5", "mic-everything__X__part1000_pd0.50_t200_p20"];
 var tsets = ["breath", "sung", "fry", "harmonium", "mixed"];
 var t1 = so +/+ "tornado" +/+ "forann_line" +/+ "out", t0 = so +/+ "tornado" +/+ "out";   // first takes (2026-10-01 night) / first sketches
+var tv = so +/+ "tornado" +/+ "forann_line" +/+ "out_voice";
 var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", "fry 1", "mixed 1"];
 ~fwSets = [
 	(name: "tornado, microtonal (5 sets, ambiX, 4 min)", kind: \ambix, labels: tsets, files: tsets.collect { |t| tor +/+ ("forann_mic-" ++ t ++ "_tornado_ambiX.wav") }),
@@ -48,6 +49,11 @@ var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", 
 	(name: "tornado, 8-way: microtonal 5 + first breath/sung/fry", kind: \ambix, labels: tsets ++ flabels.keep(3),
 		files: tsets.collect { |t| tor +/+ ("forann_mic-" ++ t ++ "_tornado_ambiX.wav") } ++ fsets.keep(3).collect { |t| t1 +/+ ("forann_" ++ t ++ "_tornado_ambiX.wav") }),
 	(name: "first sketches: For Ann accelerated (spin, fixed rise)", kind: \ambix, labels: ["spin", "fixed rise"], files: [t0 +/+ "tornado_spin_ambiX.wav", t0 +/+ "tornado_fixedrise_ambiX.wav"]),
+	// VOICE ONLY (2026-10-02, Jon): the 12 sung lines, every entry at its own golden-angle direction (tornado/forann_voice.py)
+	(name: "VOICE tornado (sung only, spread, 4 min)", kind: \ambix, labels: ["voice"], files: [tv +/+ "forann_voice_tornado_ambiX.wav"]),
+	(name: "VOICE rebuilt (sung only, spread, 3 min)", kind: \ambix, labels: ["voice"], files: [tv +/+ "forann_voice_rebuilt_ambiX.wav"]),
+	(name: "VOICE tornado by REGION (6 sectors of the circle)", kind: \ambix, labels: ["front", "front-R", "back-R", "back", "back-L", "front-L"],
+		files: (1..6).collect { |j| tv +/+ "sectors" +/+ ("forann_voice_tornado_sector" ++ j ++ "_ambiX.wav") }),
 	(name: "Rite octave down (8 renders, 5 min)", kind: \stereo, labels: rnames, files: rfiles.collect { |f| rh +/+ (f.replace("X", "rite1929half300") ++ "__norm.wav") }),
 	(name: "Rite 1x (8 renders, 2.5 min)", kind: \stereo, labels: rnames, files: rfiles.collect { |f| r1 +/+ (f.replace("X", "rite1929first150") ++ "__norm.wav") })
 ];
@@ -56,7 +62,7 @@ var fsets = ["breath", "sung", "fry", "8oct"], flabels = ["breath 1", "sung 1", 
 ~fwDc95 = [0.455, 0.237, 0.546, 0.446, 0.827, 0.707, 1.18];
 ~fwMax = 8;
 ~fwOutBus = ~fwOutBus ? 0;
-~fwP = ~fwP ? (set: 0, feat: 0, sens: 1, win: 4, floor: 0.05, contrast: 2.5, lag: 60, lag7: true, slow: 60, fast: 10, rev: false,
+~fwP = ~fwP ? (set: 6, feat: 0, sens: 1, win: 4, floor: 0.05, contrast: 2.5, lag: 60, lag7: true, slow: 60, fast: 10, rev: false,
 	norm: 0, master: 0, ambi: true, assign: [0, 1, 2, 3, 4, 5, 0, 1]);
 s = Server.default;
 s.waitForBoot { fork {
