@@ -76,7 +76,7 @@ s.waitForBoot {
 		SendReply.kr(Impulse.kr(4), '/rtPos', A2K.kr(ph));
 		Out.ar(out, st * amp.lag(0.05) * (1 - ambi).lag(0.05));
 		Out.ar(abus, bf * amp.lag(0.05) * ambi.lag(0.05));
-	}).add;
+	}).load(s);   // 18 KB: too big for /d_recv, so .add goes via a file that the first server's /sync deletes before the metro server reads it
 	SynthDef(\rtLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add;
 	s.sync;
 

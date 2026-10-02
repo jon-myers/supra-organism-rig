@@ -66,7 +66,12 @@ if (s.serverRunning.not) {
 	~stCurrent = name };
 ~stWin.view.keyDownAction = { |v, char| var i = "123456789".indexOf(char); i !? { ~stShow.(~stNames[i]) } };
 // a patch asks for its panel: give it a fresh child view in its tab (it closes the old one itself on reload)
-~stHost = { |name| var v = View(); ~stPanels[~stNames.indexOf(name)].layout.add(v); v };
+// (2026-10-02) inside a vertical ScrollView, so a tall patch (breath36) can be scrolled instead of running off the screen; a reload
+// removes the tab's previous scroller.
+~stScrolls = ~stScrolls ? IdentityDictionary.new;
+~stHost = { |name| var v = View(), sv = ScrollView().hasHorizontalScroller_(false).hasBorder_(false);
+	~stScrolls[name] !? { |o| if (o.isClosed.not) { o.remove } };
+	sv.canvas = v; ~stScrolls[name] = sv; ~stPanels[~stNames.indexOf(name)].layout.add(sv); v };
 ~stWin.onClose = { ~stHost = nil };
 ~stShow.(\breath36);
 

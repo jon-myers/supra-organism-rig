@@ -61,6 +61,13 @@ before evaluating to load fewer. Select all, evaluate.
 // (voice 1 -> A, 2 -> B, 3 -> C, 4 -> A ...): A may attack only on the beat, B on the beat or the off-beat 8th, C on any 16th
 // but at most maxC per beat. Each voice rolls its own dice per allowed slot (pA / pB / pC), so each does its own thing and
 // is often silent. Each breath lasts gate x its tier's subdivision (beat / 8th / 16th). mode 0 = unison (all on each pulse).
+// OCEAN (2026-10-02, Jon): PULSE still decides WHEN; OCEAN decides WHICH breath -- from the firing voice's own breaths, the one
+// whose spectrum (24-band shape of its first 0.4 s, sharp/ocean_match/features.py) is closest to the ocean recording AT THAT
+// MOMENT (a random pick among the topK closest, so it does not repeat). loud: 0 = level as is .. 1 = follows the ocean's swell
+// (+-18 dB). hear: the ocean itself underneath (215 goes into the AMBI field as ambiX when the AMBI tab is up). Matched breaths
+// use the 1x renders (where the features were measured).
+~b36Ocean = ~b36Ocean ? (on: false, target: 0, topK: 3, loud: 0.6, hear: false, hearDb: -18);
+~b36Ocean[\on] = false; ~b36Ocean[\hear] = false;
 [[\mode, 0], [\pA, 0.35], [\pB, 0.25], [\pC, 0.15], [\maxC, 2]].do { |kv| ~b36Pulse[kv[0]] = ~b36Pulse[kv[0]] ? kv[1] };
 ~b36Hpf = ~b36Hpf ? 70;   // breath LOW CUT in Hz (24 dB/oct), new breaths pick it up; 10 = effectively off
 ~b36Glide = 0.5;    // seconds for a morph slider move to settle
@@ -287,21 +294,21 @@ s.waitForBoot {
 	~gpSet = { |secs| ~gpP[\mean] = secs.clip(0, 12); ~b36Dirty = true };
 
 	// one breath segment of voice i, routed AMBI / quad / stereo as the window is set; used by the free player and by PULSE
-	~b36PlaySeg = { |i, bufs, b0, t0, dur, fade, lat|
+	~b36PlaySeg = { |i, bufs, b0, t0, dur, fade, lat, gain = 1|
 		s.makeBundle(lat, {
 						if ((~b36Ambi == true) and: { ~ambiBus.notNil }) {   // AMBI (dev/ambi.scd): encoded at its azimuth, decoded quad + binaural there
 							Synth(\b36SegA, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\az, (~ambiAz !? { |a| a[i] }) ? (~b36Azim[i] * pi), \el, (~ambiEl !? { |a| a[i] }) ? 0, \out, ~ambiBus.index, \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)])
+								\az, (~ambiAz !? { |a| a[i] }) ? (~b36Azim[i] * pi), \el, (~ambiEl !? { |a| a[i] }) ? 0, \out, ~ambiBus.index, \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)])
 						} {
 						if (~b36Quad and: { s.options.numOutputBusChannels > ~b36QuadOuts.maxItem }) {
 							Synth(\b36SegQ, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\azim, ~b36Azim[i], \outs, ~b36QuadOuts, \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)])
+								\azim, ~b36Azim[i], \outs, ~b36QuadOuts, \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)])
 						} {
 							Synth(\b36Seg, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\pan, ~b36Pan[i], \amp, ~b36Amp, \comp, ~b36CompFor.(~b36N)]) } };
+								\pan, ~b36Pan[i], \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)]) } };
 		}) };
 	// ---- the players: one routine per voice, breath by breath ----
 	~b36Players = nv.collect { |i|
@@ -330,19 +337,53 @@ s.waitForBoot {
 		}.play(SystemClock);
 	};
 
+	// ---- OCEAN matching (data loaded on first use) ----
+	~b36OcNames = ["waves5min", "215"];
+	~b36OcLoad = { var dir = ~b36Sharp +/+ "ocean_match", fv, ot;
+		if (~b36OcVoice.isNil) {
+			fv = File.readAllString(dir +/+ "features_voices.json").parseJSON["voices"];
+			~b36OcVoice = ~b36Meta["voices"].collect { |v| fv[v["voice"].asInteger.asString].collect { |sg| [sg[2].collect(_.asFloat), sg[3].asFloat] } } };
+		ot = File.readAllString(dir +/+ ("ocean_" ++ ~b36OcNames[~b36Ocean[\target]] ++ ".json")).parseJSON;
+		~b36OcHop = ot["hop"].asFloat; ~b36OcDur = ot["dur"].asFloat; ~b36OcPath = ot["path"];
+		~b36OcShape = ot["shape"].collect { |f| f.collect(_.asFloat) }; ~b36OcRms = ot["rms"].collect(_.asFloat);
+		~b36OcMed = ~b36OcRms.copy.sort[~b36OcRms.size div: 2];
+		("breath36: OCEAN " ++ ~b36OcNames[~b36Ocean[\target]] ++ " loaded (" ++ ~b36OcShape.size ++ " frames)").postln };
+	// the breath of voice i whose shape is closest to the ocean lat seconds from now; returns [segment, gain]
+	~b36OcPick = { |i, lat| var pos = ((Main.elapsedTime + lat) - (~b36OcT0 ? Main.elapsedTime)) % ~b36OcDur, f = (pos / ~b36OcHop).floor.asInteger.clip(0, ~b36OcShape.size - 1);
+		var tgt = ~b36OcShape[f], segs = ~b36OcVoice[i], d, order, pick, gdb;
+		d = segs.collect { |sg| var a = sg[0], acc = 0; a.size.do { |b| acc = acc + (a[b] - tgt[b]).squared }; acc };
+		order = d.order; pick = order[(~b36Ocean[\topK].asInteger.max(1).min(order.size)).rand];
+		gdb = ((~b36OcRms[f] - ~b36OcMed) * ~b36Ocean[\loud]).clip(-18, 18);
+		[pick, gdb.dbamp] };
+	~b36OcHearSyn = nil;
+	SynthDef(\b36OcHear, { |buf, amp = 0.1, out = 0, ambi = 0, abus = 0|
+		var x = PlayBuf.ar(4, buf, BufRateScale.kr(buf), loop: 1);   // ambiX (W Y Z X, SN3D) or stereo padded to 4
+		Out.ar(out, [x[0], x[1]] * amp.lag(0.2) * (1 - ambi));
+		Out.ar(abus, [x[0] * 0.7071, x[3], x[1], x[2]] * amp.lag(0.2) * ambi);   // ambiX -> ATK B-format
+	}).add;
+	~b36OcHear = { |on| ~b36OcHearSyn !? { ~b36OcHearSyn.free }; ~b36OcHearSyn = nil; ~b36OcHearBuf !? { ~b36OcHearBuf.free }; ~b36OcHearBuf = nil;
+		if (on and: { ~b36OcPath.notNil }) { fork {
+			var amb = ~b36OcPath.contains("ambiX") and: { ~ambiBus.notNil };
+			~b36OcHearBuf = Buffer.readChannel(s, ~b36OcPath, channels: if (~b36OcPath.contains("ambiX")) { [0, 1, 2, 3] } { [0, 1, 0, 1] }); s.sync;
+			~b36OcHearSyn = Synth.tail(s, \b36OcHear, [\buf, ~b36OcHearBuf, \amp, ~b36Ocean[\hearDb].dbamp, \ambi, amb.asInteger,
+				\abus, if (amb) { ~ambiBus.index } { (~b36OcDummy = ~b36OcDummy ?? { Bus.audio(s, 4) }).index }, \out, 0]);
+			~b36OcT0 = Main.elapsedTime + s.latency } } };   // the matching clock follows what is heard
+	~b36OcSet = { |on| if (on) { ~b36OcLoad.(); ~b36OcT0 = Main.elapsedTime } { ~b36OcHear.(false) }; ~b36Ocean[\on] = on;
+		if (on and: { ~b36Ocean[\hear] }) { ~b36OcHear.(true) } };
+
 	// ---- PULSE engine ----
 	~b36PulseN = 0;
 	~b36PulsePeriod = { (60 / (if (~b36Pulse[\src] == 0) { ~msBpm ? 60 } { ~b36Pulse[\bpm] }).max(1)) * ~b36Pulse[\every] };
 	// one voice's next breath, lasting at most maxDur, starting lat seconds from now
-	~b36PulseVoice = { |i, maxDur, lat|
-		var k = ~spLevel[i], bufs, ons, b0, total, n, idx, t0, t1, d, fade;
+	~b36PulseVoice = { |i, maxDur, lat, seg, gain = 1|
+		var k = if (seg.notNil) { 0 } { ~spLevel[i] }, bufs, ons, b0, total, n, idx, t0, t1, d, fade;
 		if (~spBufs[i][k].isNil or: { ~spBufs[i][k].any { |b| b.numFrames.isNil } }) { k = 0 };
 		bufs = ~spBufs[i][k]; ons = ~spOnsets[i][k]; b0 = bufs[0]; total = b0.numFrames / b0.sampleRate; n = ons.size;
 		if (~segIdx[i].isNil) { ~segIdx[i] = (~segPhase[i] * n).floor.asInteger; ~segN[i] = n };
-		idx = ~segIdx[i] % n; t0 = ons[idx]; t1 = if (idx + 1 < n) { ons[idx + 1] } { total };
+		idx = if (seg.notNil) { seg.clip(0, n - 1) } { ~segIdx[i] % n }; t0 = ons[idx]; t1 = if (idx + 1 < n) { ons[idx + 1] } { total };
 		d = (t1 - t0).max(0.05).min(maxDur.max(0.05)); fade = ~gpP.fade.min(d * 0.45);
-		~b36PlaySeg.(i, bufs, b0, t0, d, fade, lat.max(0.01));
-		~segIdx[i] = idx + 1 };
+		~b36PlaySeg.(i, bufs, b0, t0, d, fade, lat.max(0.01), gain);
+		if (seg.isNil) { ~segIdx[i] = idx + 1 } };
 	~b36Tier = { |i| i % 3 };   // 0 = A (beat), 1 = B (beat / 8th), 2 = C (16ths)
 	~b36PulseHits = 0;
 	// ONE PULSE AHEAD (2026-10-02: 20 ms of margin gave the server "late" messages): when pulse n fires, its breaths are stamped
@@ -351,7 +392,8 @@ s.waitForBoot {
 		var base2 = if (base < 0.15) { base + per } { base };
 		var jit = { (~b36Pulse[\jitter] / 1000).rand }, beat = per / ~b36Pulse[\every].max(1), g = ~b36Pulse[\gate];
 		if (~b36Pulse[\mode] == 0) {
-			nv.do { |i| if (~b36OnState[i] == 1) { ~b36PulseVoice.(i, per * g, base2 + jit.()); ~b36PulseHits = ~b36PulseHits + 1 } }
+			nv.do { |i| if (~b36OnState[i] == 1) { var lat = base2 + jit.(), pk = if (~b36Ocean[\on] == true) { ~b36OcPick.(i, lat) } { [nil, 1] };
+				~b36PulseVoice.(i, per * g, lat, pk[0], pk[1]); ~b36PulseHits = ~b36PulseHits + 1 } }
 		} {
 			// TIERS: the beat is 4 sixteenths; slot j starts j x beat/4 after the beat
 			nv.do { |i| if (~b36OnState[i] == 1) {
@@ -360,8 +402,9 @@ s.waitForBoot {
 				var p = [~b36Pulse[\pA], ~b36Pulse[\pB], ~b36Pulse[\pC]][tier];
 				var len = [beat, beat / 2, beat / 4][tier] * g;
 				slots.do { |j| if (p.coin and: { (tier != 2) or: { cnt < ~b36Pulse[\maxC] } }) {
+					var lat = base2 + (j * beat / 4) + jit.(), pk = if (~b36Ocean[\on] == true) { ~b36OcPick.(i, lat) } { [nil, 1] };
 					cnt = cnt + 1; ~b36PulseHits = ~b36PulseHits + 1;
-					~b36PulseVoice.(i, len, base2 + (j * beat / 4) + jit.()) } } } } };
+					~b36PulseVoice.(i, len, lat, pk[0], pk[1]) } } } } };
 		~b36PulseN = ~b36PulseN + 1; ~b36Dirty = true };
 	// metronome beats (the metro server's /msBeat; counts from its start)
 	OSCdef(\b36Beat, { |msg, time, addr| var n = msg[3].asInteger;
@@ -460,6 +503,12 @@ s.waitForBoot {
 		.action_({ |b| ~b36Pulse[key] = b.value }) };
 	~b36PulseText = StaticText().string_("").fixedWidth_(170);
 	~b36LoadText = StaticText().string_("").fixedWidth_(330).font_(Font.default.size_(11));
+	~b36OcBox = CheckBox().string_("OCEAN match (which breath)").value_(false).action_({ |c| ~b36OcSet.(c.value) });
+	~b36OcMenu = PopUpMenu().items_(["ocean waves (5 min)", "ocean 215 (ambiX, 1 min)"]).value_(~b36Ocean[\target]).fixedWidth_(190)
+		.action_({ |m| ~b36Ocean[\target] = m.value; if (~b36Ocean[\on]) { ~b36OcSet.(true) } });
+	~b36OcNb = { |key, lo, hi, step, dec| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec).value_(~b36Ocean[key]).fixedWidth_(52)
+		.action_({ |b| ~b36Ocean[key] = b.value; if (key == \hearDb) { ~b36OcHearSyn !? { ~b36OcHearSyn.set(\amp, b.value.dbamp) } } }) };
+	~b36OcHearBox = CheckBox().string_("hear the ocean").value_(false).action_({ |c| ~b36Ocean[\hear] = c.value; if (~b36Ocean[\on]) { ~b36OcHear.(c.value) } });
 	~b36PulseMode = PopUpMenu().items_(["unison", "tiers (A beat / B 8ths / C 16ths)"]).value_(~b36Pulse[\mode]).fixedWidth_(230)
 		.action_({ |m| ~b36Pulse[\mode] = m.value });
 	~b36FSig = PopUpMenu().items_(["AC (press up, release down)", "DC (press pushes up)"]).value_(~b36F[\signal]).fixedWidth_(200)
@@ -517,11 +566,13 @@ s.waitForBoot {
 			StaticText().string_("tiled " ++ performers.collect(_.keep(1)).join("/") ++ "; speed levels loaded for "
 				++ ~spAvail.count(_ == levelNames.size) ++ "/" ++ nv ++ " voices")),
 		HLayout(~b36PulseBox, ~b36PulseSrc, ~b36PulseEvery, StaticText().string_("own BPM"), ~b36PulseNb.(\bpm, 10, 400, 1, 0),
-			StaticText().string_("gate"), ~b36PulseNb.(\gate, 0.05, 1, 0.05, 2), StaticText().string_("loosen ms"), ~b36PulseNb.(\jitter, 0, 200, 5, 0),
+			StaticText().string_("gate"), ~b36PulseNb.(\gate, 0.05, 1, 0.05, 2), StaticText().string_("loosen ms"), ~b36PulseNb.(\jitter, 0, 500, 10, 0),
 			StaticText().string_("offset ms"), ~b36PulseNb.(\offset, -300, 300, 5, 0), ~b36PulseText, nil),
 		HLayout(StaticText().string_("PULSE mode"), ~b36PulseMode, StaticText().string_("  chance per slot:  A (beat)"), ~b36PulseNb.(\pA, 0, 1, 0.05, 2),
 			StaticText().string_("B (beat / 8th)"), ~b36PulseNb.(\pB, 0, 1, 0.05, 2), StaticText().string_("C (16ths)"), ~b36PulseNb.(\pC, 0, 1, 0.05, 2),
 			StaticText().string_("C max per beat"), ~b36PulseNb.(\maxC, 0, 4, 1, 0), nil),
+		HLayout(~b36OcBox, ~b36OcMenu, StaticText().string_("pick among closest"), ~b36OcNb.(\topK, 1, 12, 1, 0),
+			StaticText().string_("loudness follows ocean"), ~b36OcNb.(\loud, 0, 1, 0.1, 1), ~b36OcHearBox, StaticText().string_("dB"), ~b36OcNb.(\hearDb, -60, 0, 1, 0), nil),
 		HLayout(StaticText().string_("FORCE per fader group (Korg knob g = depth; morph = slider + 0.5 x knob x signal)").font_(Font.default.boldVariant),
 			~b36FSig, StaticText().string_("sens x"), ~b36FSens, StaticText().string_("smooth s"), ~b36FSmooth, nil),
 		~b36FStrip,
@@ -638,7 +689,8 @@ s.waitForBoot {
 
 	~b36Win.onClose = { ~b36Rout.stop; ~b36Players.do(_.stop); ~b36Synths.do(_.free);
 		~b36FCRout.stop; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus.free;
-		~b36PulseRout !? { ~b36PulseRout.stop }; OSCdef(\b36Beat).free; ~b36Pulse[\on] = false; ~b36LoadRout !? { ~b36LoadRout.stop }; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
+		~b36PulseRout !? { ~b36PulseRout.stop }; OSCdef(\b36Beat).free; ~b36Pulse[\on] = false; ~b36LoadRout !? { ~b36LoadRout.stop };
+		~b36OcHearSyn !? { ~b36OcHearSyn.free }; ~b36OcHearBuf !? { ~b36OcHearBuf.free }; ~b36Ocean[\on] = false; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
 		~b36Silent.free; ~b36MorphBus.free; ~b36GainBus.free;
 		MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 		~spBufs.flat.do { |b| b !? { b.free } } };
