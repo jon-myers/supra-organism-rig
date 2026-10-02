@@ -43,7 +43,11 @@ Select all, evaluate.
 ~msInDevice  = nil;   // no input: this patch only makes sound (avoids in/out sample-rate clashes)
 // IN-EARS = ALWAYS the "Multi-Output Device" (2026-10-01, Jon): fixed here, no menu, and NEVER a fallback to another output --
 // if it is missing (no headset connected), the metronome stays silent, says so, and retries every 15 s.
-~msOutDevice = "Multi-Output Device"; ~msForceDevice = true;   // back to the Multi-Output Device 2026-10-02 (Jon); was "BTD 700" 2026-10-01 evening to 10-02 morning //   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
+// 2026-10-02 afternoon (Jon): "bail on the metro separate thing for now, all going through fireface" -- this server now plays
+// on the FIREFACE, outs 1/2 (Main speakers), the same device and clock as the main server. The "in-ears" row of the OUTPUTS
+// matrix = the Main speakers now. Set ~msUseInEars = true before loading to go back to the Multi-Output Device.
+~msOutDevice = if (~msUseInEars == true) { "Multi-Output Device" } { ServerOptions.outDevices.detect { |d| d.beginsWith("Fireface") } ? "Multi-Output Device" };
+~msForceDevice = true;   // back to the Multi-Output Device 2026-10-02 (Jon); was "BTD 700" 2026-10-01 evening to 10-02 morning //   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = -3.dbamp; ~msVoice = 0;   // IN-EAR click volume: -3 dB by default (Jon, 2026-10-01; was -44 dB)
 ~msReadHz = 4;      // big tempo readout updates per second (capped 0.25-4)
