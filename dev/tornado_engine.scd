@@ -25,7 +25,8 @@ LAYERS (x = BUILD)
             + a kick heartbeat from x .25 (1.5 s -> 0.07 s) + Articulation phrases from x .15                       [clock]
   harmonium swells (higher versions after x .45), a ladder of growing chords F2 -> A6 from x .3, a high cluster above x .9 [clock]
   birds     Macaulay Library calls from x .1, ~1 per 20 s -> ~3 per s                                                 [clock]
-  snatches  a few whole 10-s Rite / Phantom Pain reconstruct stretches, 10 dB under the lines                        [clock]
+  snatches  a few whole 10-s Rite / Phantom Pain reconstruct stretches, 10 dB under the lines; at most 2 Rite in the whole ending,
+            from 2 renders only (sharp/accents/rite_two_versions.py)                        [clock]
 FOLLOW (OFF by default since Jon didn't like it; 2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
   each layer's volume follows a TRAILING AVERAGE of the dancers' motion (AC RMS, one-pole over "window" s, / its 95th percentile in the
   10-02 run, on a square-root scale so typical motion = 0 dB): still dancers -> about -0.8 x depth dB, a sustained surge -> +depth dB.
@@ -316,10 +317,14 @@ s.waitForBoot { fork {
 		snatch: { var j = 0; loop { var x = ~tnX, kind, pool, b, linesRms, amp;
 			if (x < 0.1) { 0.5.wait } {
 				kind = if (j.odd) { \pp } { [\rite_open, \rite_open, \rite_open, \rite_mid].choose };
+				// at most 2 Rite snatches in the whole ending (Jon, 2026-10-03: "no more than 2 ... rite of spring during the end ... 2 instances
+				// total"); counted from START; after that the Rite turns are silent and Phantom Pain keeps its own pace
+				if ((kind != \pp) and: { (~tnRiteN ? 0) >= 2 }) { kind = nil };
 				pool = ~tnSnatch.select { |p| p[0] == kind }; b = (pool.choose ? ~tnSnatch.choose)[1];
 				// 10 dB under the lines at this moment: ~ (line level) x sqrt(lines sounding)
 				linesRms = ~tnCresL.(x) * ~tnGains[\lines] * ((43.7 * (0.33 ** (x ** 1.6))) / (1.5 * ((0.12 / 1.5) ** (x ** 1.6)))).sqrt;
-				~tnPlayL.(\snatch, \tnStereo, b, linesRms * -10.dbamp * ~tnLvl.(\snatch), 2pi.rand, [\spread, 0.6]);
+				if (kind.notNil) { ~tnPlayL.(\snatch, \tnStereo, b, linesRms * -10.dbamp * ~tnLvl.(\snatch), 2pi.rand, [\spread, 0.6]);
+					if (kind != \pp) { ~tnRiteN = (~tnRiteN ? 0) + 1 } };
 				j = j + 1; (10 + rrand(14, 24)).wait } } }
 	);
 	// the dancers: every jolt
@@ -339,7 +344,7 @@ s.waitForBoot { fork {
 
 	// ---- transport ----
 	~tnRouts = ();
-	~tnStart = { if (~tnLoaded) { ~tnCutDone = false; ~tnSetRing.();
+	~tnStart = { if (~tnLoaded) { ~tnCutDone = false; ~tnRiteN = 0; ~tnSetRing.();
 		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\mlag, 0.1, \master, ~tnMasterAmp.());
 		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index); ~tnFolSyn !? { ~tnFolSyn.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index) };
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
