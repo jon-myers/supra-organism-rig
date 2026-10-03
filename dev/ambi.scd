@@ -111,7 +111,7 @@ s.waitForBoot {
 	// breath36 in ambisonics: \b36Seg's body, encoded with FoaPanB instead of panned
 	if (~b36Meta.notNil) {
 		var ns = ~b36Meta["slots"].size;
-		SynthDef(\b36SegA, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, az = 0, el = 0, amp = 0.8, comp = 1, out = 0|
+		SynthDef(\b36SegA, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, az = 0, el = 0, amp = 0.8, comp = 1, out = 0, vol = 0.8|
 			var bufs = \bufs.kr(0 ! ns);
 			var m = In.kr(morphBus) * (ns - 1);
 			var env = EnvGen.kr(Env.linen(fade, (dur - fade).max(0.001), fade, 1, \lin), doneAction: 2);
@@ -120,7 +120,7 @@ s.waitForBoot {
 				PlayBuf.ar(1, bufs[i], BufRateScale.kr(bufs[i]), 1, start, 0) * w
 			}.sum;
 			sig = BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10));   // low cut (breath mic rumble)
-			Out.ar(out, FoaPanB.ar(sig * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), az, el));
+			Out.ar(out, FoaPanB.ar(sig * env * In.kr(gainBus) * amp.lag(0.1) * vol.lag(0.1) * comp.lag(1), az, el));
 		}).add;
 	} { "ambi: breath36 not loaded -- the AMBI breath mode is unavailable until it is (re-evaluate this after)".warn };
 	s.sync;

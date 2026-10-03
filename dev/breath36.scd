@@ -111,7 +111,7 @@ s.waitForBoot {
 	// a moment later and free/stop the NEW instance's buffers and players (and 2 x 2304 buffers > the limit)
 	~b36Win !? { ~b36Win.onClose = nil; if (~b36Win.isClosed.not) { ~b36Win.close } };
 	~b36Rout !? { ~b36Rout.stop }; ~b36Players !? { ~b36Players.do(_.stop) }; ~b36Synths !? { ~b36Synths.do(_.free) };
-	~b36Silent !? { ~b36Silent.free }; ~b36MorphBus !? { ~b36MorphBus.free }; ~b36GainBus !? { ~b36GainBus.free };
+	~b36Silent !? { ~b36Silent.free }; ~b36MorphBus !? { ~b36MorphBus.free }; ~b36GainBus !? { ~b36GainBus.free }; ~b36VolBus !? { ~b36VolBus.free };
 	~b36FCRout !? { ~b36FCRout.stop }; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus !? { ~b36FCBus.free };
 	~b36LoadRout !? { ~b36LoadRout.stop };
 	~spBufs !? { ~spBufs.flat.do { |b| b !? { b.free } } }; ~spBufs = nil; ~b36Bufs = nil; ~b36Players = nil;
@@ -164,7 +164,7 @@ s.waitForBoot {
 		var x = Select.kr(csig, [(OnePole.kr(ac.abs, c) * 3).clip(0, 1), OnePole.kr(dc, c), dc, ac]);
 		Out.kr(out, Lag.kr(x.clip(-1, 1), csmooth));   // the DELAY is applied language-side (~b36FCDelayed)
 	}).add;
-	SynthDef(\b36Seg, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, pan = 0, amp = 0.8, comp = 1, out = 0|
+	SynthDef(\b36Seg, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, pan = 0, amp = 0.8, comp = 1, out = 0, vol = 0.8|
 		var bufs = \bufs.kr(0 ! ns);
 		var m = In.kr(morphBus) * (ns - 1);
 		// LINEAR fades: consecutive segments are the same continuous material, and linear in/out sum to exactly 1 across the overlap
@@ -174,10 +174,10 @@ s.waitForBoot {
 			PlayBuf.ar(1, bufs[i], BufRateScale.kr(bufs[i]), 1, start, 0) * w
 		}.sum;
 		sig = BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10));   // LOW CUT (2026-10-01): the breath takes carry 20-40 Hz mic air rumble (13 % of their energy below 40 Hz)
-		Out.ar(out, Pan2.ar(sig * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), pan));
+		Out.ar(out, Pan2.ar(sig * env * In.kr(gainBus) * amp.lag(0.1) * vol.lag(0.1) * comp.lag(1), pan));
 	}).add;
 	// quad: the same breath, panned around 4 speakers (azim -1..1 = the full circle, PanAz width 2 = equal-power pairs)
-	SynthDef(\b36SegQ, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, azim = 0, amp = 0.8, comp = 1|
+	SynthDef(\b36SegQ, { |hpf = 70, start = 0, dur = 1, fade = 0.04, morphBus, gainBus, azim = 0, amp = 0.8, comp = 1, vol = 0.8|
 		var bufs = \bufs.kr(0 ! ns), outs = \outs.kr([2, 3, 4, 5]);
 		var m = In.kr(morphBus) * (ns - 1);
 		var env = EnvGen.kr(Env.linen(fade, (dur - fade).max(0.001), fade, 1, \lin), doneAction: 2);
@@ -185,7 +185,7 @@ s.waitForBoot {
 			var w = (1 - (m - i).abs).clip(0, 1).sqrt;
 			PlayBuf.ar(1, bufs[i], BufRateScale.kr(bufs[i]), 1, start, 0) * w
 		}.sum;
-		var q = PanAz.ar(4, BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10)) * env * In.kr(gainBus) * amp.lag(0.1) * comp.lag(1), azim, 1, 2);
+		var q = PanAz.ar(4, BHiPass.ar(BHiPass.ar(sig, hpf.max(10)), hpf.max(10)) * env * In.kr(gainBus) * amp.lag(0.1) * vol.lag(0.1) * comp.lag(1), azim, 1, 2);
 		4.do { |c| Out.ar(outs[c], q[c]) };
 	}).add;
 
@@ -222,6 +222,7 @@ s.waitForBoot {
 
 	~b36Silent = Bus.control(s, 1).set(0);
 	~b36MorphBus = Bus.control(s, nv); ~b36GainBus = Bus.control(s, nv);
+	~b36VolBus = Bus.control(s, 1).set(~b36Amp);   // the VOLUME, read LIVE by every breath (2026-10-03, Jon: "should be live, not just when the next sample begins")
 	~b36Morph = 0 ! nv; ~b36OnState = 0 ! nv; ~offAt = nil ! nv;
 	~b36Mute = false ! nv; ~b36Solo = false ! nv;
 	~spLevel = 0 ! nv; ~spOffset = 0 ! nv;
@@ -300,16 +301,16 @@ s.waitForBoot {
 						if ((~b36Ambi == true) and: { ~ambiBus.notNil }) {   // AMBI (dev/ambi.scd): encoded at its azimuth, decoded quad + binaural there
 							Synth(\b36SegA, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\az, (~ambiAz !? { |a| a[i] }) ? (~b36Azim[i] * pi), \el, (~ambiEl !? { |a| a[i] }) ? 0, \out, ~ambiBus.index, \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)])
+								\az, (~ambiAz !? { |a| a[i] }) ? (~b36Azim[i] * pi), \el, (~ambiEl !? { |a| a[i] }) ? 0, \out, ~ambiBus.index, \amp, gain, \vol, ~b36VolBus.asMap, \comp, ~b36CompFor.(~b36N)])
 						} {
 						if (~b36Quad and: { s.options.numOutputBusChannels > ~b36QuadOuts.maxItem }) {
 							Synth(\b36SegQ, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\azim, ~b36Azim[i], \outs, ~b36QuadOuts, \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)])
+								\azim, ~b36Azim[i], \outs, ~b36QuadOuts, \amp, gain, \vol, ~b36VolBus.asMap, \comp, ~b36CompFor.(~b36N)])
 						} {
 							Synth(\b36Seg, [\hpf, ~b36Hpf, \bufs, bufs.collect(_.bufnum), \start, t0 * b0.sampleRate, \dur, dur, \fade, fade,
 								\morphBus, ~b36MorphBus.index + i, \gainBus, ~b36GainBus.index + i,
-								\pan, ~b36Pan[i], \amp, ~b36Amp * gain, \comp, ~b36CompFor.(~b36N)]) } };
+								\pan, ~b36Pan[i], \amp, gain, \vol, ~b36VolBus.asMap, \comp, ~b36CompFor.(~b36N)]) } };
 		}) };
 	// ---- the players: one routine per voice, breath by breath ----
 	~b36Players = nv.collect { |i|
@@ -529,7 +530,7 @@ s.waitForBoot {
 	~b36AmpBox = NumberBox().clipLo_(0).clipHi_(2).step_(0.05).scroll_step_(0.05).decimals_(2).value_(~b36Amp).fixedWidth_(56);
 	~b36VolText = StaticText().string_("").fixedWidth_(64).align_(\center);
 	~b36SetAmp = { |a|
-		~b36Amp = a.clip(0, 2);
+		~b36Amp = a.clip(0, 2); ~b36VolBus !? { ~b36VolBus.set(~b36Amp) };
 		~uiLater.(\b36Amp, { ~b36AmpBox.value = ~b36Amp;
 		   ~b36VolText.string = if (~b36Amp <= 0.01) { "-inf dB" } { ~b36Amp.ampdb.round(0.5).asString ++ " dB" } });
 	};   // new breaths pick the level up; running ones finish at the old level (each breath is < 4 s)
@@ -698,7 +699,7 @@ s.waitForBoot {
 		~b36FCRout.stop; ~b36FCSyn !? { ~b36FCSyn.free }; ~b36FCSyn = nil; ~b36FCBus.free;
 		~b36PulseRout !? { ~b36PulseRout.stop }; OSCdef(\b36Beat).free; ~b36Pulse[\on] = false; ~b36LoadRout !? { ~b36LoadRout.stop };
 		~b36OcHearSyn !? { ~b36OcHearSyn.free }; ~b36OcHearBuf !? { ~b36OcHearBuf.free }; ~b36Ocean[\on] = false; ~mkOwners !? { ~mkOwners.remove(\breath36); ~mkOwner = ~mkOwners.first };
-		~b36Silent.free; ~b36MorphBus.free; ~b36GainBus.free;
+		~b36Silent.free; ~b36MorphBus.free; ~b36GainBus.free; ~b36VolBus !? { ~b36VolBus.free }; ~b36VolBus = nil;
 		MIDIdef(\b36cc).free; MIDIdef(\b36note).free;
 		~spBufs.flat.do { |b| b !? { b.free } } };
 	// ---- the speed levels, in the background ----
