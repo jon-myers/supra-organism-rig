@@ -19,7 +19,7 @@
 
 ## The ending: TORNADO tab (12, key =)
 - BUILD (Korg fader 1) = where the ending is; AUTO creeps it, PEAK (Korg >>) glides it to 100 %, HOLD (Korg CYCLE) freezes it.
-- HARD CUT now rings on: sympathetic strings (C D E G A), ~12 s (the room reverb was removed) (RING row; Korg knob 4 = ring length, knob 5 = strings level after the cut). Untick "ring after HARD CUT" for a dead stop.
+- HARD CUT = a finger mute (highs first, ~40 ms); sitar sympathetic strings (jawari, C D E G A) ring 26 dB under the music and ~4 s after the cut (THE END row: level, ring s; Korg knob 4 = ring s, knob 5 = level). Untick "finger mute" for a 4-ms choke, "strings" for none.
 - At 100 % it stays at full intensity until you act: FADE OUT (Korg SET) or **HARD CUT (Korg REC)**.
 - START / STOP = Korg PLAY / STOP. Selecting the tab gives it the Korg; TRACK < > passes the Korg on.
 - Needs the AMBI tab (quad + binaural) and the FORCE tab on live OSC.

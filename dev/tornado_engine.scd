@@ -8,14 +8,14 @@ The same rules as the offline render (rig/sharp/accents/render_tornado4.py, "3c"
 is where the piece is, and every layer reads it.
   BUILD     the fader. AUTO creeps it forward (minutes from 0 to the peak); PEAK glides it to 1 over N s; HOLD freezes it;
             you can always grab it. At 1 everything runs at its peak rate for as long as you stay there.
-  MASTER    fader + FADE OUT / FADE IN over N s (FADE OUT also stops new events once it is silent); HARD CUT: silent within ~5 ms,
-            every voice freed, all layers stopped. START begins again from the current BUILD.
-  RING      (2026-10-03, Jon: "the hard cut might need some reverb, or ... sitar sympathetic strings ringing over everything")
-            13 sympathetic strings (comb loops tuned C D E G A, C3-E5: what the harmonium peak material sounds; the sitar
-            taraf bank of idtap-client synthesis/kernels.py), fed by everything the tornado plays. (A JPverb room was here too;
-            removed the same night -- Jon: "that reverb is incredibly corny and cheap sounding".)
-            While it runs they sit under it as a halo ("during" dB); at HARD CUT the dry sound goes and they rise to "after" dB
-            and ring out over "ring" s. FADE OUT fades the ring too; START puts them back under the music.
+  MASTER    fader + FADE OUT / FADE IN over N s (FADE OUT also stops new events once it is silent). START begins again from BUILD.
+  THE END   (2026-10-03, Jon: "the hard cut might need ... sitar strings sympathetic strings ringing over everything ... muting with a
+            finger? or a little percussive accent?" -> he picked sharp/ring/out/ring_finger_soft.wav)
+            HARD CUT = a FINGER MUTE: the highs go first, silent in ~40 ms (untick for a 4-ms choke); every voice freed, layers stopped.
+            STRINGS: 13 sitar sympathetic strings (the idtap Karplus-Strong string with stiffness, in-loop damping and JAWARI, + the
+            fitted body; tuned C D E G A, C3-E5, what the harmonium peak sounds), driven by everything the tornado plays. They ring
+            26 dB under the music the whole time (level 0 dB), never jump; the cut just exposes them, dying over ~4 s ("ring").
+            FADE OUT fades them too. (First tries, same night: plain comb filters + a JPverb room -- "corny and cheap sounding".)
 LAYERS (x = BUILD)
   lines     the For Ann line renders (5 materials joining at x 0 / .12 / .25 / .38 / .5), an entry every 1.5 s -> 0.12 s, the lines
             climbing up to 3x faster, each at its own golden-angle direction                                       [clock]
@@ -37,7 +37,8 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
-~tnP = (ringOn: true, strDur: -18, strAft: 0, ring: 12, folOn: true, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
+~tnRingGain = 0.66;   // calibration: lvl 0 dB = 26 dB under the music (headless, BUILD 0.9: strings 22.4 dB under at gain 1; 2026-10-03)
+~tnP = (ringOn: true, ringLvl: 0, ringT60: 4, finger: true, folOn: true, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
@@ -70,22 +71,35 @@ s.waitForBoot { fork {
 		var x = PlayBuf.ar(2, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp * lv;
 		var b = FoaPanB.ar(x[0], az + spread, 0) + FoaPanB.ar(x[1], az - spread, 0);
 		Out.ar(out, [b[0], b[1] * width, b[2] * width, b[3] * width]) }).load(s);
-	SynthDef(\tnMaster, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, gate = 1, ringbus = 0|
-		var g = In.ar(in, 4) * Lag.kr(gate, 0.004), b = g * VarLag.kr(master, mlag, warp: \sin);
+	// HARD CUT (gate 0): finger = like a hand on the strings (Jon's pick, ring_finger_soft): the highs go first (lowpass 20 kHz -> 400 Hz
+	// in ~8 ms), gone in ~40 ms; finger 0 = choke in 4 ms
+	SynthDef(\tnMaster, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, gate = 1, ringbus = 0, finger = 1|
+		var fc = 400 * (50 ** Lag.kr(gate, 0.008)), sw = finger * (gate < 0.5);
+		var raw = In.ar(in, 4).collect { |r| Select.ar(sw, [r, LPF.ar(r, fc)]) };
+		var g = raw * Lag.kr(gate, Select.kr(finger, [0.004, 0.04])), b = g * VarLag.kr(master, mlag, warp: \sin);
 		Out.ar(ringbus, g[0]);                                                            // the RING's input: after the cut, before the fader
 		SendPeakRMS.kr(b[0], 4, 3, '/tnLvl');
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
-	// RING: sympathetic strings (each a comb loop at 1/f, its input darkened like thin wire, levelled by (1 - feedback) so a long
-	// ring does not swamp). cut 0 = "during" levels, cut 1 = "after"; the master fader (not its gate) scales it all.
-	SynthDef(\tnRing, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, cut = 0, on = 1, ring = 12,
-			strDur = 0.12, strAft = 1|
-		var x = In.ar(in, 1), c = Lag.kr(cut, 0.05), freqs = [48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76].midicps;
-		var drive = LPF.ar(HPF.ar(x, 70), 2500), b = 0 ! 4, v, amp;
-		freqs.do { |f, j| var g = 10 ** (-3 / (f * ring)), y = CombC.ar(drive * (1 - g) * \sgain.kr(6), 0.05, f.reciprocal, ring);
-			b = b + FoaPanB.ar(LPF.ar(y, 4000), j * 137.50776.degrad, 0) };
-		amp = (strDur * (1 - c)) + (strAft * c); b = b * amp / freqs.size.sqrt;
-		b = b * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
+	// RING (2026-10-03, Jon picked sharp/ring/out/ring_finger_soft.wav): the idtap sitar string (kernels.py ks_string) as 13 sympathetic
+	// strings tuned C D E G A, C3-E5. Each: a delay loop (LocalIn = one block + DelayC) with the stiffness allpass, a one-pole lowpass
+	// and the loop gain from T60 inside it, and JAWARI -- the sounding length shortened by the string's own displacement (the buzz);
+	// never plucked, only driven through the "bridge" by what the tornado plays (after the cut gate, so a finger mute stops the drive
+	// too). Then the fitted sitar body (6 resonators, kernels.py SITAR_BODY_*). Calibrated (gain) so lvl 0 dB rings 26 dB under the music.
+	SynthDef(\tnRing, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, on = 1, t60 = 4, lvl = 1, drive = 0.005, gain = 1|
+		var srL = s.sampleRate ? 48000, bs = BlockSize.ir, x = In.ar(in, 1) * drive;
+		var midis = [48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76], a = 0.4995871023130969, jaw = 0.4966044493908164, thr = 0.0028586992022563043;
+		var fb = LocalIn.ar(midis.size), strs, b;
+		var bodyF = [61.551765783016805, 394.76819702770854, 356.6305040103169, 550.0312125345872, 1133.764848607439, 2634.183052925333], bodyQ = [6, 8, 6, 5, 4, 3], bodyMix = 0.558298962867979;
+		strs = midis.collect { |m, j|
+			var f = m.midicps, w = 2pi * f / srL, pd = atan2(sin(w) * (1 - a.squared), (2 * a) + ((1 + a.squared) * cos(w))) / w, d = (srL / f) - pd;
+			var g = (10 ** (-3 / (f * t60))).min(0.99999), dd = (d * (1 - (jaw * (fb[j] - thr).max(0)))).max(bs + 1);
+			x + (g * OnePole.ar(FOS.ar(DelayC.ar(fb[j], 0.03, (dd - bs) / srL), a, 1, a.neg), 0.004)) };
+		LocalOut.ar(strs);
+		b = strs.collect { |y, j| FoaPanB.ar(y, j * 137.50776.degrad, 0) }.sum / midis.size.sqrt;
+		b = b.collect { |c| (bodyMix * bodyF.collect { |bf, k| BPF.ar(c, bf, bodyQ[k].reciprocal) * bodyQ[k] }.sum) + ((1 - bodyMix) * c) };
+		SendPeakRMS.kr(strs.abs.reduce(\max), 2, 3, '/tnRingPk');
+		b = LeakDC.ar(b) * gain * lvl * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
 	// FOLLOW: trailing averages of the dancers -> a level per layer on ~tnLBus
@@ -171,10 +185,10 @@ s.waitForBoot { fork {
 					PopUpMenu().items_(["1", "2", "3", "4", "5", "6", "7 ctr", "ensemble", "off"]).value_(~tnP[\folDrv][k] ? 7).fixedWidth_(86)
 						.action_({ |m| ~tnP[\folDrv][k] = m.value; ~tnSetFollow.() })] }.flatten ++ [nil])),
 			~tnFolTxt = StaticText().string_("").font_(Font.monospace(11)),
-			hd.("RING -- sympathetic strings (C D E G A), ringing on after HARD CUT (dB)"),
-			HLayout(CheckBox().string_("ring after HARD CUT").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
-				lbl.("   strings during"), box.(\strDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\strAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
-				lbl.("   ring"), box.(\ring, 2, 60, 1, 0, 52, { ~tnSetRing.() }), lbl.("s"), nil),
+			hd.("THE END -- HARD CUT as a finger mute; sitar sympathetic strings (C D E G A, jawari) ring under the music and on after it"),
+			HLayout(CheckBox().string_("finger mute (else 4-ms choke)").value_(~tnP[\finger]).action_({ |c| ~tnP[\finger] = c.value; ~tnSetRing.() }),
+				CheckBox().string_("   strings").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
+				lbl.("   level"), box.(\ringLvl, -40, 20, 1, 0, 52, { ~tnSetRing.() }), lbl.("dB (0 = 26 dB under the music)   ring"), box.(\ringT60, 0.5, 30, 0.5, 1, 52, { ~tnSetRing.() }), lbl.("s"), nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			~tnStatus,
 			nil);
@@ -225,7 +239,8 @@ s.waitForBoot { fork {
 	// BEFORE the AMBI tab's decoder group (at the tail): a writer after it is never heard (Group.isPlaying is false for an unwatched group, so no check)
 	~tnMasterSyn = if (~ambiGrp.notNil) { Synth.before(~ambiGrp, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) } { Synth.tail(s, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) };
 	~tnRingSyn = Synth.after(~tnMasterSyn, \tnRing, [\in, ~tnRingIn.index]);
-	~tnSetRing = { ~tnRingSyn !? { ~tnRingSyn.set(\on, ~tnP[\ringOn].asInteger, \ring, ~tnP[\ring], \strDur, ~tnP[\strDur].dbamp, \strAft, ~tnP[\strAft].dbamp) } };
+	~tnSetRing = { ~tnRingSyn !? { ~tnRingSyn.set(\on, ~tnP[\ringOn].asInteger, \t60, ~tnP[\ringT60], \lvl, ~tnP[\ringLvl].dbamp, \gain, ~tnRingGain) };
+		~tnMasterSyn !? { ~tnMasterSyn.set(\finger, ~tnP[\finger].asInteger) } };
 	~tnSetRing.();
 	~tnSetAmbi = { |on| var a = on and: { ~ambiBus.notNil }; ~tnP[\ambi] = on;
 		[~tnMasterSyn, ~tnRingSyn].do { |n| n !? { n.set(\ambi, a.asInteger, \abus, if (a) { ~ambiBus.index } { ~tnDummy4.index }) } };
@@ -316,12 +331,13 @@ s.waitForBoot { fork {
 			if ((x >= 0.6) and: { j > 2.2 } and: { 0.5.coin }) {
 				~tnPlayL.(\harm, \tnStereo, if (x.coin) { ~tnStab.copyRange(20, ~tnStab.size - 1).choose } { ~tnStab.keep(20).choose }, 1.1 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), az) } } }, '/tnHit', s.addr);
 	OSCdef(\tnAct, { |msg| ~tnAct = msg[3] }, '/tnAct', s.addr);
+	OSCdef(\tnRingPk, { |msg| ~tnRingPk = msg[3] }, '/tnRingPk', s.addr);   // loudest string displacement (jawari engages above 0.003)
 	OSCdef(\tnLvl, { |msg| ~tnPeak = msg[3] }, '/tnLvl', s.addr);
 
 	// ---- transport ----
 	~tnRouts = ();
 	~tnStart = { if (~tnLoaded) {
-		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\cut, 0, \mlag, 0.1, \master, ~tnMasterAmp.());
+		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\mlag, 0.1, \master, ~tnMasterAmp.());
 		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index); ~tnFolSyn !? { ~tnFolSyn.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index) };
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
 		~tnClock = Routine { var last = Main.elapsedTime; loop { var now = Main.elapsedTime, dt = now - last; last = now;
@@ -333,7 +349,7 @@ s.waitForBoot { fork {
 			0.05.wait } }.play(SystemClock);
 		"TORNADO: running from BUILD " ++ (~tnX * 100).round ++ " %".postln } { "TORNADO: still loading".warn } };
 	~tnStop = { ~tnRouts !? { ~tnRouts.do(_.stop) }; ~tnRouts = (); ~tnClock !? { ~tnClock.stop }; ~tnClock = nil; ~tnRun = false };
-	~tnHardCut = { ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) }; ~tnRingSyn !? { ~tnRingSyn.set(\cut, 1) }; ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
+	~tnHardCut = { ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) };  ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
 		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln };
 	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnRingSyn.set(\mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
@@ -349,7 +365,7 @@ s.waitForBoot { fork {
 	// ---- nanoKONTROL2 (2026-10-02): shared like the other tabs (TRACK < > passes it on; selecting this tab takes it) ----
 	//   fader 1 BUILD   fader 2 MASTER   faders 3-7 levels (lines, percussion, harmonium, birds, snatches: -36 .. +6 dB)   fader 8 jolt sens
 	//   knob 1 time to the peak (30 s - 15 min; << starts AUTO with it)   knob 2 PEAK glide s (2-90)   knob 3 fade s (0.5-30)
-	//   knob 4 RING length s (2-60)   knob 5 strings level after the cut (-36 .. +12 dB)   knob 6 FOLLOW window s (1-30)   knob 7 FOLLOW depth dB (0-18)
+	//   knob 4 strings ring s (0.5-20)   knob 5 strings level (-30 .. +12 dB)   knob 6 FOLLOW window s (1-30)   knob 7 FOLLOW depth dB (0-18)
 	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> peak   << auto on/off   SET fade out   MARKER < fade in
 	~mkOwners = (~mkOwners ? []).add(\tornado).asSet.asArray;
 	~tnLast = IdentityDictionary.new; ~tnCaught = IdentityDictionary.new; ~tnHeld = IdentityDictionary.new; ~tnWay = IdentityDictionary.new; ~tnPend = IdentityDictionary.new;
@@ -386,8 +402,8 @@ s.waitForBoot { fork {
 			{ cc == 16 } { var t = (30 * (30 ** v)).round(5); ~tnP[\toClimax] = t; ~uiLater.(\tnK16, { ~tnMinBox.value = (t / 60).floor; ~tnSecBox.value = t % 60 }) }
 			{ cc == 17 } { ~tnSetBox.(\climaxS, (2 * (45 ** v)).round(1)) }
 			{ cc == 18 } { ~tnSetBox.(\fade, (0.5 * (60 ** v)).round(0.1)) }
-			{ cc == 19 } { ~tnSetBox.(\ring, (2 * (30 ** v)).round(1)); ~tnSetRing.() }
-			{ cc == 20 } { ~tnSetBox.(\strAft, (-36 + (48 * v)).round(1)); ~tnSetRing.() }
+			{ cc == 19 } { ~tnSetBox.(\ringT60, (0.5 * (40 ** v)).round(0.5)); ~tnSetRing.() }
+			{ cc == 20 } { ~tnSetBox.(\ringLvl, (-30 + (42 * v)).round(1)); ~tnSetRing.() }
 			{ cc == 21 } { ~tnSetBox.(\folWin, (30 ** v).round(0.5).max(1)); ~tnSetFollow.() }
 			{ cc == 22 } { ~tnSetBox.(\folDepth, (18 * v).round(1)); ~tnSetFollow.() }
 			{ (val > 0) and: { [41, 42, 43, 44, 45, 46, 60, 61].includes(cc) } } { ~tnButton.(cc) } } }).permanent_(true);
