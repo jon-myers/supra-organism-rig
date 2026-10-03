@@ -58,6 +58,11 @@ before evaluating to load fewer. Select all, evaluate.
 // Each pulse is scheduled one pulse AHEAD (on the predicted beat), so the server never gets it late. While PULSE is on the free-running players wait, keeping their places.
 ~b36Pulse = ~b36Pulse ? (on: false, src: 0, every: 1, bpm: 60, gate: 0.8, jitter: 0, offset: 0);
 ~b36Pulse[\on] = false;   // never on at load
+// PHASE (2026-10-03, Jon: "when we do the pulse every 3 ... different ones will be on different phases ... and maybe switch around, but
+// just generally play 1/3 of the time, maybe stochastically"): unison mode only. 0 together = all on every Nth beat (as before);
+// 1 staggered = the pulse runs on EVERY beat and voice i breathes when (beat + its phase) % N == 0, the phases reshuffled every 4
+// cycles; 2 random = on every beat each voice breathes with probability 1/N. A breath still lasts gate x N beats.
+~b36Pulse[\phase] = ~b36Pulse[\phase] ? 0; ~b36PhaseOf = nil;
 // TIERS (2026-10-02, Jon): mode 1 = a probabilistic polyrhythm on the 16th grid. Voices interleave into three tiers of 12
 // (voice 1 -> A, 2 -> B, 3 -> C, 4 -> A ...): A may attack only on the beat, B on the beat or the off-beat 8th, C on any 16th
 // but at most maxC per beat. Each voice rolls its own dice per allowed slot (pA / pB / pC), so each does its own thing and
@@ -390,11 +395,15 @@ s.waitForBoot {
 	~b36PulseHits = 0;
 	// ONE PULSE AHEAD (2026-10-02: 20 ms of margin gave the server "late" messages): when pulse n fires, its breaths are stamped
 	// for the NEXT pulse (now + period, + offset), so attacks land on the predicted beat with >= 150 ms of scheduling margin
-	~b36PulseFire = { var per = ~b36PulsePeriod.(), base = per + (~b36Pulse[\offset] / 1000);
-		var base2 = if (base < 0.15) { base + per } { base };
+	~b36PulseFire = { |bn| var per = ~b36PulsePeriod.(), ph = if (~b36Pulse[\mode] == 0) { ~b36Pulse[\phase] ? 0 } { 0 }, nE = ~b36Pulse[\every].max(1);
+		var ahead = if (ph > 0) { per / nE } { per }, base = ahead + (~b36Pulse[\offset] / 1000);
+		var base2 = if (base < 0.15) { base + ahead } { base }, bnext = (bn ? ~b36PulseN) + 1;
 		var jit = { (~b36Pulse[\jitter] / 1000).rand }, beat = per / ~b36Pulse[\every].max(1), g = ~b36Pulse[\gate];
+		// staggered: a phase per voice, reshuffled every 4 cycles (the groupings change)
+		if ((ph == 1) and: { ~b36PhaseOf.isNil or: { (~b36PhaseOf.size != nv) or: { (bnext % (4 * nE)) == 0 } } }) {
+			~b36PhaseOf = (0..(nv - 1)).collect { |i| i % nE }.scramble };
 		if (~b36Pulse[\mode] == 0) {
-			nv.do { |i| if (~b36OnState[i] == 1) { var lat = base2 + jit.(), pk = if (~b36Ocean[\on] == true) { ~b36OcPick.(i, lat) } { [nil, 1] };
+			nv.do { |i| if ((~b36OnState[i] == 1) and: { switch (ph, 0, { true }, 1, { ((bnext + ~b36PhaseOf[i]) % nE) == 0 }, { (1 / nE).coin }) }) { var lat = base2 + jit.(), pk = if (~b36Ocean[\on] == true) { ~b36OcPick.(i, lat) } { [nil, 1] };
 				~b36PulseVoice.(i, per * g, lat, pk[0], pk[1]); ~b36PulseHits = ~b36PulseHits + 1 } }
 		} {
 			// TIERS: the beat is 4 sixteenths; slot j starts j x beat/4 after the beat
@@ -411,11 +420,13 @@ s.waitForBoot {
 	// metronome beats (the metro server's /msBeat; counts from its start)
 	OSCdef(\b36Beat, { |msg, time, addr| var n = msg[3].asInteger;
 		if ((~b36Pulse[\on] == true) and: { ~b36Pulse[\src] == 0 } and: { ~msServer.notNil } and: { addr.port == ~msServer.addr.port }
-			and: { ((n - 1) % ~b36Pulse[\every].max(1)) == 0 }) { ~b36PulseFire.() } }, '/msBeat');
+			and: { ((~b36Pulse[\phase] ? 0) > 0) or: { ((n - 1) % ~b36Pulse[\every].max(1)) == 0 } }) { ~b36PulseFire.(n) } }, '/msBeat');
 	// own tempo
 	~b36PulseRout !? { ~b36PulseRout.stop };
 	~b36PulseRestart = { ~b36PulseRout !? { ~b36PulseRout.stop };
-		~b36PulseRout = Routine { loop { if ((~b36Pulse[\on] == true) and: { ~b36Pulse[\src] == 1 }) { ~b36PulseFire.() }; ~b36PulsePeriod.().wait } }.play(SystemClock) };
+		~b36PulseRout = Routine { var n = 0; loop { var ph = (~b36Pulse[\phase] ? 0) > 0; n = n + 1;
+			if ((~b36Pulse[\on] == true) and: { ~b36Pulse[\src] == 1 }) { ~b36PulseFire.(n) };
+			(if (ph) { ~b36PulsePeriod.() / ~b36Pulse[\every].max(1) } { ~b36PulsePeriod.() }).wait } }.play(SystemClock) };
 	~b36PulseSet = { |on| ~b36Pulse[\on] = on;
 		if (on and: { ~b36Pulse[\src] == 0 } and: { ~msSynth.isNil }) { "breath36: PULSE follows the metronome -- start the metronome (tab 4), or choose own tempo".warn };
 		~b36PulseRestart.() };
@@ -499,6 +510,8 @@ s.waitForBoot {
 	~b36PulseBox = CheckBox().string_("PULSE (unison breaths)").value_(false).action_({ |c| ~b36PulseSet.(c.value) });
 	~b36PulseSrc = PopUpMenu().items_(["metronome beats", "own tempo"]).value_(~b36Pulse[\src]).fixedWidth_(150)
 		.action_({ |m| ~b36Pulse[\src] = m.value; ~b36PulseRestart.() });
+	~b36PulsePhase = PopUpMenu().items_(["together", "staggered phases", "random 1/N"]).value_(~b36Pulse[\phase] ? 0).fixedWidth_(140)
+		.action_({ |m| ~b36Pulse[\phase] = m.value; ~b36PhaseOf = nil; ~b36PulseRestart.() });
 	~b36PulseEvery = PopUpMenu().items_(["every beat", "every 2", "every 3", "every 4", "every 8"]).value_([1, 2, 3, 4, 8].indexOf(~b36Pulse[\every]) ? 0).fixedWidth_(100)
 		.action_({ |m| ~b36Pulse[\every] = [1, 2, 3, 4, 8][m.value]; ~b36PulseRestart.() });
 	~b36PulseNb = { |key, lo, hi, step, dec| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec).value_(~b36Pulse[key]).fixedWidth_(52)
@@ -567,7 +580,7 @@ s.waitForBoot {
 			CheckBox().string_("QUAD -> outs " ++ (~b36QuadOuts + 1).join(" ")).value_(~b36Quad).action_({ |c| ~b36Quad = c.value }), nil,
 			StaticText().string_("tiled " ++ performers.collect(_.keep(1)).join("/") ++ "; speed levels loaded for "
 				++ ~spAvail.count(_ == levelNames.size) ++ "/" ++ nv ++ " voices")),
-		HLayout(~b36PulseBox, ~b36PulseSrc, ~b36PulseEvery, StaticText().string_("own BPM"), ~b36PulseNb.(\bpm, 10, 400, 1, 0),
+		HLayout(~b36PulseBox, ~b36PulseSrc, ~b36PulseEvery, ~b36PulsePhase, StaticText().string_("own BPM"), ~b36PulseNb.(\bpm, 10, 400, 1, 0),
 			StaticText().string_("gate"), ~b36PulseNb.(\gate, 0.05, 1, 0.05, 2), StaticText().string_("loosen ms"), ~b36PulseNb.(\jitter, 0, 500, 10, 0),
 			StaticText().string_("offset ms"), ~b36PulseNb.(\offset, -300, 300, 5, 0), ~b36PulseText, nil),
 		HLayout(StaticText().string_("PULSE mode"), ~b36PulseMode, StaticText().string_("  chance per slot:  A (beat)"), ~b36PulseNb.(\pA, 0, 1, 0.05, 2),
