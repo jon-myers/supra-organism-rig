@@ -6,10 +6,15 @@ like a hard cut").
 
 The same rules as the offline render (rig/sharp/accents/render_tornado4.py, "3c"), but nothing is on a fixed clock: BUILD (0..1)
 is where the piece is, and every layer reads it.
-  BUILD     the fader. AUTO creeps it forward (minutes from 0 to the climax); CLIMAX glides it to 1 over N s; HOLD freezes it;
-            you can always grab it. At 1 everything runs at its climax rate for as long as you stay there.
+  BUILD     the fader. AUTO creeps it forward (minutes from 0 to the peak); PEAK glides it to 1 over N s; HOLD freezes it;
+            you can always grab it. At 1 everything runs at its peak rate for as long as you stay there.
   MASTER    fader + FADE OUT / FADE IN over N s (FADE OUT also stops new events once it is silent); HARD CUT: silent within ~5 ms,
             every voice freed, all layers stopped. START begins again from the current BUILD.
+  RING      (2026-10-03, Jon: "the hard cut might need some reverb, or ... sitar sympathetic strings ringing over everything")
+            13 sympathetic strings (comb loops tuned C D E G A, C3-E5: what the harmonium peak material sounds; the sitar
+            taraf bank of idtap-client synthesis/kernels.py) + a long JPverb room, both fed by everything the tornado plays.
+            While it runs they sit under it as a halo ("during" dB); at HARD CUT the dry sound goes and they rise to "after" dB
+            and ring out over "ring" s. FADE OUT fades the ring too; START puts them back under the music.
 LAYERS (x = BUILD)
   lines     the For Ann line renders (5 materials joining at x 0 / .12 / .25 / .38 / .5), an entry every 1.5 s -> 0.12 s, the lines
             climbing up to 3x faster, each at its own golden-angle direction                                       [clock]
@@ -27,6 +32,7 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
+~tnP = (ringOn: true, strDur: -18, strAft: 0, verbDur: -30, verbAft: -8, ring: 12).putAll(~tnP);   // the RING after HARD CUT
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
@@ -34,9 +40,9 @@ s.waitForBoot { fork {
 	var man, rd, n = 0, total, loadList;
 	// ---- tear down a previous evaluation ----
 	{ ~tnWin !? { if (~tnWin.isClosed.not) { ~tnWin.onClose = nil; ~tnWin.close } } }.defer;
-	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnGrp !? { ~tnGrp.free };
+	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free };
 	~tnAllBufs !? { ~tnAllBufs.do(_.free) }; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free; MIDIdef(\tncc).free; MIDIdef(\tnnote).free;
-	~tnBus !? { ~tnBus.free }; ~tnBus = Bus.audio(s, 4); ~tnDummy4 !? { ~tnDummy4.free }; ~tnDummy4 = Bus.audio(s, 4);
+	~tnBus !? { ~tnBus.free }; ~tnBus = Bus.audio(s, 4); ~tnRingIn !? { ~tnRingIn.free }; ~tnRingIn = Bus.audio(s, 1); ~tnDummy4 !? { ~tnDummy4.free }; ~tnDummy4 = Bus.audio(s, 4);
 	~tnZero !? { ~tnZero.free }; ~tnZero = Bus.control(s, 14).setn(0 ! 14);
 
 	man = File.readAllString(~tnRoot +/+ "live" +/+ "live.json").parseJSON;
@@ -56,9 +62,24 @@ s.waitForBoot { fork {
 		var x = PlayBuf.ar(2, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp;
 		var b = FoaPanB.ar(x[0], az + spread, 0) + FoaPanB.ar(x[1], az - spread, 0);
 		Out.ar(out, [b[0], b[1] * width, b[2] * width, b[3] * width]) }).load(s);
-	SynthDef(\tnMaster, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, gate = 1|
-		var b = In.ar(in, 4) * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(gate, 0.004);
+	SynthDef(\tnMaster, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, gate = 1, ringbus = 0|
+		var g = In.ar(in, 4) * Lag.kr(gate, 0.004), b = g * VarLag.kr(master, mlag, warp: \sin);
+		Out.ar(ringbus, g[0]);                                                            // the RING's input: after the cut, before the fader
 		SendPeakRMS.kr(b[0], 4, 3, '/tnLvl');
+		Out.ar(abus, b * ambi.lag(0.05));
+		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
+	// RING: sympathetic strings (each a comb loop at 1/f, its input darkened like thin wire, levelled by (1 - feedback) so a long
+	// ring does not swamp) + a JPverb room. cut 0 = "during" levels, cut 1 = "after"; the master fader (not its gate) scales it all.
+	SynthDef(\tnRing, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, cut = 0, on = 1, ring = 12,
+			strDur = 0.12, strAft = 1, verbDur = 0.03, verbAft = 0.4|
+		var x = In.ar(in, 1), c = Lag.kr(cut, 0.05), freqs = [48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76].midicps;
+		var drive = LPF.ar(HPF.ar(x, 70), 2500), b = 0 ! 4, v, amp;
+		freqs.do { |f, j| var g = 10 ** (-3 / (f * ring)), y = CombC.ar(drive * (1 - g) * \sgain.kr(6), 0.05, f.reciprocal, ring);
+			b = b + FoaPanB.ar(LPF.ar(y, 4000), j * 137.50776.degrad, 0) };
+		amp = (strDur * (1 - c)) + (strAft * c); b = b * amp / freqs.size.sqrt;
+		v = JPverb.ar(x ! 2, ring, 0.35, 2.5, 0.8) * ((verbDur * (1 - c)) + (verbAft * c));
+		b = b + FoaPanB.ar(v[0], 0.5pi, 0) + FoaPanB.ar(v[1], -0.5pi, 0);
+		b = b * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
 	// JOLTS: a jump of a sensor's AC between frames, over that sensor's 99th percentile today (x sens); at most one per 0.12 s
@@ -98,7 +119,7 @@ s.waitForBoot { fork {
 		~tnPlus = Button().states_([["+30 s"]]).fixedWidth_(56).action_({ ~tnNudge.(30) });
 		~tnHoldBtn = Button().states_([["HOLD", Color.black, Color.grey(0.85)], ["HOLDING (clock paused)", Color.white, Color.new(0.7, 0.45, 0)]]).fixedWidth_(190)
 			.action_({ |b| ~tnHold = b.value == 1; if (~tnHold) { ~tnGlide = nil } });
-		~tnClimaxBtn = Button().states_([["CLIMAX NOW", Color.black, Color.new(1, 0.6, 0.2)]]).fixedWidth_(120)
+		~tnClimaxBtn = Button().states_([["PEAK NOW", Color.black, Color.new(1, 0.6, 0.2)]]).fixedWidth_(120)
 			.action_({ ~tnHold = false; ~tnHoldBtn.value = 0; ~tnGlideTo.(1, ~tnP[\climaxS]) });
 		// BUILD
 		~tnBuild = Slider().orientation_(\horizontal).fixedHeight_(44).value_(~tnX).action_({ |sl| ~tnGlide = nil; ~tnX = sl.value });
@@ -106,7 +127,7 @@ s.waitForBoot { fork {
 		~tnNowTxt = StaticText().string_("").font_(Font.default.size_(13));
 		// output
 		~tnMaster = Slider().orientation_(\horizontal).fixedHeight_(30).value_((~tnP[\master].dbamp / 2).sqrt.min(1)).action_({ |sl|
-			var a = 2 * sl.value.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) }; ~uiLater.(\tnM, { ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) });
+			var a = 2 * sl.value.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) }; ~tnRingSyn !? { ~tnRingSyn.set(\mlag, 0.1, \master, a) }; ~uiLater.(\tnM, { ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) });
 		~tnMasterTxt = StaticText().string_(~tnP[\master].round(0.5).asString ++ " dB").fixedWidth_(64);
 		~tnFadeOut = Button().states_([["FADE OUT", Color.white, Color.red(0.55)]]).fixedWidth_(100).action_({ ~tnFade.(0, ~tnP[\fade]) });
 		~tnFadeIn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(90).action_({ ~tnFade.(~tnMasterAmp.(), ~tnP[\fade]) });
@@ -115,8 +136,8 @@ s.waitForBoot { fork {
 		~tnWin.layout = VLayout(
 			HLayout(~tnRunBtn, ~tnCutBtn, ~tnInfo, nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
-			hd.("THE CLOCK -- when the climax comes"),
-			HLayout(~tnCountdown, ~tnAutoBox, lbl.("climax in"), ~tnMinBox, lbl.("min"), ~tnSecBox, lbl.("s"), ~tnSetBtn, ~tnMinus, ~tnPlus, nil),
+			hd.("THE CLOCK -- when the peak comes"),
+			HLayout(~tnCountdown, ~tnAutoBox, lbl.("peak in"), ~tnMinBox, lbl.("min"), ~tnSecBox, lbl.("s"), ~tnSetBtn, ~tnMinus, ~tnPlus, nil),
 			HLayout(~tnHoldBtn, ~tnClimaxBtn, lbl.("over"), box.(\climaxS, 1, 300, 1, 0), lbl.("s"), nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			hd.("BUILD -- where the ending is (drag it any time; the clock re-paces from where you leave it)"),
@@ -130,13 +151,18 @@ s.waitForBoot { fork {
 			HLayout(lbl.("lines"), box.(\lines, -40, 12, 1, 0), lbl.("  percussion"), box.(\perc, -40, 12, 1, 0), lbl.("  harmonium"), box.(\harm, -40, 12, 1, 0),
 				lbl.("  birds"), box.(\birds, -40, 12, 1, 0), lbl.("  snatches"), box.(\snatch, -40, 12, 1, 0),
 				lbl.("     dancers' jolt sensitivity"), box.(\sens, 0.1, 5, 0.1, 1, 52, { |v| ~tnJolt !? { ~tnJolt.set(\sens, v) } }), lbl.("x"), nil),
+			hd.("RING -- sympathetic strings (C D E G A) + room, ringing on after HARD CUT (dB)"),
+			HLayout(CheckBox().string_("ring after HARD CUT").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
+				lbl.("   strings during"), box.(\strDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\strAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
+				lbl.("   room during"), box.(\verbDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\verbAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
+				lbl.("   ring"), box.(\ring, 2, 60, 1, 0, 52, { ~tnSetRing.() }), lbl.("s"), nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			~tnStatus,
 			nil);
 		// what is in at a given BUILD, and what joins next
 		~tnEntries = [[0, "tornado lines (voice)"], [0.10, "birds, snatches"], [0.12, "+ breath lines, harmonium swells"], [0.15, "Articulation phrases, thuds"],
 			[0.25, "+ fry lines, kick heartbeat"], [0.30, "booms, harmonium ladder"], [0.38, "+ harmonium lines"], [0.45, "higher harmonium"],
-			[0.50, "+ mixed lines"], [0.60, "harmonium stabs"], [0.90, "high harmonium cluster"], [1.0, "CLIMAX (everything at full rate)"]];
+			[0.50, "+ mixed lines"], [0.60, "harmonium stabs"], [0.90, "high harmonium cluster"], [1.0, "PEAK (everything at full rate)"]];
 		~tnStatRout = Routine { var last = (entries: 0, hits: 0, events: 0), n = 0; loop {
 			var d = (entries: ~tnStats[\entries] - last[\entries], hits: ~tnStats[\hits] - last[\hits], events: ~tnStats[\events] - last[\events]);
 			var x = ~tnX, nxt = ~tnEntries.detect { |e| e[0] > (x + 0.0001) }, rem = ~tnRemaining.();
@@ -144,9 +170,9 @@ s.waitForBoot { fork {
 			~uiLater.(\tnStat, {
 				~tnBuild.value = x; ~tnBuildTxt.string = "BUILD " ++ (x * 100).round.asInteger ++ " %";
 				~tnCountdown.string = case
-					{ x >= 0.999 } { "AT CLIMAX  " ++ (Main.elapsedTime - (~tnAtClimax ? Main.elapsedTime)).asTimeString.drop(3).keep(5) }
+					{ x >= 0.999 } { "AT PEAK  " ++ (Main.elapsedTime - (~tnAtClimax ? Main.elapsedTime)).asTimeString.drop(3).keep(5) }
 					{ ~tnHold } { "HOLDING  (" ++ (rem ? 0).asTimeString.drop(3).keep(5) ++ " left)" }
-					{ rem.notNil } { "CLIMAX IN  " ++ rem.asTimeString.drop(3).keep(5) }
+					{ rem.notNil } { "PEAK IN  " ++ rem.asTimeString.drop(3).keep(5) }
 					{ "AUTO is off" };
 				~tnCountdown.stringColor_(if (x >= 0.999) { Color.red(0.7) } { if (rem.notNil and: { rem < 30 }) { Color.new(0.8, 0.4, 0) } { Color.black } });
 				~tnNowTxt.string = "playing now: everything up to \"" ++ (~tnEntries.select { |e| e[0] <= (x + 0.0001) }.last[1]) ++ "\"" ++
@@ -154,7 +180,7 @@ s.waitForBoot { fork {
 				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger
 					++ " %   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
 			n = n + 1; 0.25.wait } }.play(AppClock);
-		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
+		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
 			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
 			MIDIdef(\tncc).free; MIDIdef(\tnnote).free; ~mkOwners !? { ~mkOwners.remove(\tornado); if (~mkOwner == \tornado) { ~mkOwner = ~mkOwners.first } } };
 	}.defer;
@@ -176,12 +202,16 @@ s.waitForBoot { fork {
 	// ---- the output: voices -> one B-format bus -> master (fades, hard cut) -> AMBI tab or stereo ----
 	~tnGrp = Group.head(s);
 	// BEFORE the AMBI tab's decoder group (at the tail): a writer after it is never heard (Group.isPlaying is false for an unwatched group, so no check)
-	~tnMasterSyn = if (~ambiGrp.notNil) { Synth.before(~ambiGrp, \tnMaster, [\in, ~tnBus.index]) } { Synth.tail(s, \tnMaster, [\in, ~tnBus.index]) };
+	~tnMasterSyn = if (~ambiGrp.notNil) { Synth.before(~ambiGrp, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) } { Synth.tail(s, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) };
+	~tnRingSyn = Synth.after(~tnMasterSyn, \tnRing, [\in, ~tnRingIn.index]);
+	~tnSetRing = { ~tnRingSyn !? { ~tnRingSyn.set(\on, ~tnP[\ringOn].asInteger, \ring, ~tnP[\ring], \strDur, ~tnP[\strDur].dbamp, \strAft, ~tnP[\strAft].dbamp,
+		\verbDur, ~tnP[\verbDur].dbamp, \verbAft, ~tnP[\verbAft].dbamp) } };
+	~tnSetRing.();
 	~tnSetAmbi = { |on| var a = on and: { ~ambiBus.notNil }; ~tnP[\ambi] = on;
-		~tnMasterSyn.set(\ambi, a.asInteger, \abus, if (a) { ~ambiBus.index } { ~tnDummy4.index });
+		[~tnMasterSyn, ~tnRingSyn].do { |n| n !? { n.set(\ambi, a.asInteger, \abus, if (a) { ~ambiBus.index } { ~tnDummy4.index }) } };
 		if (on and: { ~ambiBus.isNil }) { "TORNADO: AMBI needs the AMBI tab; playing a stereo fold-down".warn } };
 	~tnSetAmbi.(~tnP[\ambi]);
-	~tnMasterAmp = { ~tnP[\master].dbamp }; ~tnMasterSyn.set(\master, ~tnMasterAmp.());
+	~tnMasterAmp = { ~tnP[\master].dbamp }; ~tnMasterSyn.set(\master, ~tnMasterAmp.()); ~tnRingSyn.set(\master, ~tnMasterAmp.());
 	~tnJolt = Synth.head(s, \tnJolt, [\fbus, (~fhBus !? (_.index)) ? ~tnZero.index, \thr, ~tnThr, \sens, ~tnP[\sens], \act95, ~tnAct95]);
 
 	// ---- helpers ----
@@ -265,7 +295,7 @@ s.waitForBoot { fork {
 	// ---- transport ----
 	~tnRouts = ();
 	~tnStart = { if (~tnLoaded) {
-		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.());
+		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\cut, 0, \mlag, 0.1, \master, ~tnMasterAmp.());
 		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index);
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
 		~tnClock = Routine { var last = Main.elapsedTime; loop { var now = Main.elapsedTime, dt = now - last; last = now;
@@ -277,12 +307,12 @@ s.waitForBoot { fork {
 			0.05.wait } }.play(SystemClock);
 		"TORNADO: running from BUILD " ++ (~tnX * 100).round ++ " %".postln } { "TORNADO: still loading".warn } };
 	~tnStop = { ~tnRouts !? { ~tnRouts.do(_.stop) }; ~tnRouts = (); ~tnClock !? { ~tnClock.stop }; ~tnClock = nil; ~tnRun = false };
-	~tnHardCut = { ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) }; ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
+	~tnHardCut = { ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) }; ~tnRingSyn !? { ~tnRingSyn.set(\cut, 1) }; ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
 		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln };
-	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
+	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnRingSyn.set(\mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
 	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)); if (to >= 1) { ~tnClimaxAt = Main.elapsedTime + secs } };
-	// THE CLOCK: AUTO = reach the climax at a deadline (now + "climax in"); BUILD paces itself to land on it and re-paces from wherever
+	// THE CLOCK: AUTO = reach the peak at a deadline (now + "peak in"); BUILD paces itself to land on it and re-paces from wherever
 	// the fader is left; HOLD pauses the countdown; -30 / +30 s move the deadline
 	~tnSetAuto = { |on| ~tnAuto = on; if (on) { ~tnClimaxAt = Main.elapsedTime + ~tnP[\toClimax] } { ~tnClimaxAt = nil };
 		{ ~tnAutoBox !? { ~tnAutoBox.value = on } }.defer };
@@ -292,8 +322,9 @@ s.waitForBoot { fork {
 
 	// ---- nanoKONTROL2 (2026-10-02): shared like the other tabs (TRACK < > passes it on; selecting this tab takes it) ----
 	//   fader 1 BUILD   fader 2 MASTER   faders 3-7 levels (lines, percussion, harmonium, birds, snatches: -36 .. +6 dB)   fader 8 jolt sens
-	//   knob 1 time to the climax (30 s - 15 min; << starts AUTO with it)   knob 2 CLIMAX glide s (2-90)   knob 3 fade s (0.5-30)
-	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> climax   << auto on/off   SET fade out   MARKER < fade in
+	//   knob 1 time to the peak (30 s - 15 min; << starts AUTO with it)   knob 2 PEAK glide s (2-90)   knob 3 fade s (0.5-30)
+	//   knob 4 RING length s (2-60)   knob 5 strings level after the cut (-36 .. +12 dB)
+	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> peak   << auto on/off   SET fade out   MARKER < fade in
 	~mkOwners = (~mkOwners ? []).add(\tornado).asSet.asArray;
 	~tnLast = IdentityDictionary.new; ~tnCaught = IdentityDictionary.new; ~tnHeld = IdentityDictionary.new; ~tnWay = IdentityDictionary.new; ~tnPend = IdentityDictionary.new;
 	~tnCatch = { |cc, v, cur| var last = ~tnLast[cc], caught = ~tnCaught[cc] ? false;   // soft takeover (as breath36 / rite)
@@ -321,7 +352,7 @@ s.waitForBoot { fork {
 			case
 			{ cc == 0 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, ~tnX) }) { ~tnGlide = nil; ~tnX = v } }
 			{ cc == 1 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, (~tnP[\master].dbamp / 2).sqrt.min(1)) }) {
-				var a = 2 * v.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) };
+				var a = 2 * v.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) }; ~tnRingSyn !? { ~tnRingSyn.set(\mlag, 0.1, \master, a) };
 				~uiLater.(\tnKM, { ~tnMaster.value = v; ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) } }
 			{ (cc >= 2) and: { cc <= 6 } } { var key = [\lines, \perc, \harm, \birds, \snatch][cc - 2];
 				if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, ~tnVOfDb.(~tnP[key])) }) { ~tnSetBox.(key, ~tnDbOf.(v).round(0.5)) } }
@@ -329,6 +360,8 @@ s.waitForBoot { fork {
 			{ cc == 16 } { var t = (30 * (30 ** v)).round(5); ~tnP[\toClimax] = t; ~uiLater.(\tnK16, { ~tnMinBox.value = (t / 60).floor; ~tnSecBox.value = t % 60 }) }
 			{ cc == 17 } { ~tnSetBox.(\climaxS, (2 * (45 ** v)).round(1)) }
 			{ cc == 18 } { ~tnSetBox.(\fade, (0.5 * (60 ** v)).round(0.1)) }
+			{ cc == 19 } { ~tnSetBox.(\ring, (2 * (30 ** v)).round(1)); ~tnSetRing.() }
+			{ cc == 20 } { ~tnSetBox.(\strAft, (-36 + (48 * v)).round(1)); ~tnSetRing.() }
 			{ (val > 0) and: { [41, 42, 43, 44, 45, 46, 60, 61].includes(cc) } } { ~tnButton.(cc) } } }).permanent_(true);
 	MIDIdef.noteOn(\tnnote, { |vel, note| if (~mkOwner == \tornado) { ~tnButton.(note) } }).permanent_(true);
 	"TORNADO_ENGINE_READY".postln;
