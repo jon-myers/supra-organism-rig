@@ -41,6 +41,9 @@ s = Server.default;
                             // so the Fireface, the Multi-Output in-ears and the lav can share one rate; the renders are 44.1 k too)
 // ...chosen AT LAUNCH (2026-10-02): `audiorate rig` (no rate) picks the best rate the in-ears AND the Fireface offer right now
 // (48 k, else 44.1 k) and prints "RIG RATE n"; everything boots at that. Set ~stRate before running this to force one.
+// the BTD 700 keepalive (2026-10-02 night): -70 dBFS pink noise to the dongle from OUTSIDE SC, so the Auracast broadcast (and the
+// headphones joined to it) survives every SC reboot. Starts it if it is not already running; harmless if it is.
+if (File.exists("~/.local/bin/btd_keepalive".standardizePath)) { ("tabs: " ++ ("~/.local/bin/btd_keepalive start".standardizePath).unixCmdGetStdOut).postln };
 if (File.exists("~/.local/bin/audiorate".standardizePath)) { var out = ("~/.local/bin/audiorate rig " ++ (~stRateForce ? "")).standardizePath.unixCmdGetStdOut, r;
 	("tabs: audio rates\n" ++ out).postln;
 	r = out.findRegexp("RIG RATE ([0-9]+)"); if (r.size > 1) { ~stRate = r[1][1].asInteger } };

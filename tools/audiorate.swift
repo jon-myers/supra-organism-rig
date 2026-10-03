@@ -150,19 +150,28 @@ case "rig":   // audiorate rig [rate]  (default 44100, the rig's rate since 2026
     if let m = find("MacBook Pro Microphone", wantIn: true) { setDefault(kAudioHardwarePropertyDefaultInputDevice, m, "input") }
     usleep(1_500_000)
     var R = 48000.0
-    if args.count > 1, let r = Double(args[1]) { R = r } else {
+    // the IN-EAR device (2026-10-02 evening): the BTD 700 when it is connected (Auracast to the headphones), else the Multi-Output
+    // Device. The BTD 700's rate is NEVER changed when avoidable -- a rate change restarts its broadcast and the headphones drop.
+    let btd = find("BTD 700", wantIn: false)
+    if args.count > 1, let r = Double(args[1]) { R = r } else if let b = btd {
+        let ff = find("Fireface").map(rates) ?? []; let br = rate(b)
+        R = (ff.isEmpty || ff.contains(br)) ? br : ([48000.0, 44100.0].first { rates(b).contains($0) && ff.contains($0) } ?? br)
+        print("auto: BTD 700 runs at \(Int(br)) Hz (left alone), Fireface offers \(ff.map { Int($0) }) -> \(Int(R))")
+    } else {
         let mo = find("Multi-Output").map(rates) ?? [], ff = find("Fireface").map(rates) ?? []
         let both = [48000.0, 44100.0].filter { mo.contains($0) && ff.contains($0) }
         R = both.first ?? 48000
         print("auto: Multi-Output offers \(mo.map { Int($0) }), Fireface offers \(ff.map { Int($0) }) -> \(Int(R))" + (both.isEmpty ? "  (NO shared rate: an in-ear member is in call mode; the lav will be off)" : ""))
     }
     var ok = true
-    if let f = find("Fireface") { ok = setRate(f, R) && ok } else { print("Fireface: not connected"); ok = false }
+    if let f = find("Fireface") { if rate(f) != R { ok = setRate(f, R) && ok } else { print("Fireface: already \(Int(R)) Hz") } } else { print("Fireface: not connected"); ok = false }
     usleep(1_500_000)   // a headset leaves call mode a moment after its mic is released
-    if let mo = find("Multi-Output") {
+    if let b = btd {
+        if rate(b) != R { ok = setRate(b, R) && ok } else { print("BTD 700: \(Int(R)) Hz, untouched") }
+    } else if let mo = find("Multi-Output") {
         for s in ids(mo, kAudioAggregateDevicePropertyActiveSubDeviceList) where rate(s) != R { ok = setRate(s, R) && ok }
         ok = setRate(mo, R) && ok
-    } else { print("Multi-Output Device: not found"); ok = false }
+    } else { print("in-ear device: neither the BTD 700 nor the Multi-Output Device found"); ok = false }
     print(""); list(); print("RIG RATE \(Int(R))"); exit(ok ? 0 : 1)
 default: print("usage: audiorate [list | set \"<name>\" <Hz> | input \"<name>\" | output \"<name>\" | rig]"); exit(2)
 }

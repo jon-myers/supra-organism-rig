@@ -46,7 +46,9 @@ Select all, evaluate.
 // 2026-10-02 afternoon (Jon): "bail on the metro separate thing for now, all going through fireface" -- this server now plays
 // on the FIREFACE, outs 1/2 (Main speakers), the same device and clock as the main server. The "in-ears" row of the OUTPUTS
 // matrix = the Main speakers now. Set ~msUseInEars = true before loading to go back to the Multi-Output Device.
-~msOutDevice = if (~msUseInEars == true) { "Multi-Output Device" } { ServerOptions.outDevices.detect { |d| d.beginsWith("Fireface") } ? "Multi-Output Device" };
+// 2026-10-02 night (Jon): back to the BTD 700 -> the headphones (Auracast). The broadcast is kept alive OUTSIDE SuperCollider by
+// rig/tools/btd_keepalive.sh (the launcher starts it), so rebooting SC no longer drops the headphones. ~msInEarsDevice overrides.
+~msOutDevice = ~msInEarsDevice ?? { ServerOptions.outDevices.detect { |d| d.beginsWith("BTD 700") } ? "BTD 700" };
 ~msForceDevice = true;   // back to the Multi-Output Device 2026-10-02 (Jon); was "BTD 700" 2026-10-01 evening to 10-02 morning //   // choose another in the window (e.g. "Multi-Output Device");      // nil = system default; the Multi-Output Device carries the click to several outputs at once
 ~msLo = 20; ~msHi = 80; ~msBpm = 30;   // slider spans 20-80, starts at 30
 ~msGlide = 0.5; ~msAmp = -3.dbamp; ~msVoice = 0;   // IN-EAR click volume: -3 dB by default (Jon, 2026-10-01; was -44 dB)
