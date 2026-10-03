@@ -27,8 +27,10 @@ L / R as an arc set by their width, voices sit at their singer's home round the 
 chords are spread very wide (three decorrelated copies per channel over each half circle). Room per layer ~wlRoomDb
 (default dyads none, voices none, chords -20 dB). Events already sounding finish where they started.
 OMBAK (2026-10-03, Jon: "thats pretty cool with the latest wall of sound ombak thing, lets get that wired up in supercollider"):
-every dyad and voice is mixed with an OFFSET COPY of itself whose offset follows one dancer, as in sharp/ombak/ombak_wall_combined.py
-(OM_SUBTLE=1): dyads take sensors 1-4 in turn, voices 01-04 <- sensor 5, sensor 6, central, the ensemble. Activity = AC RMS over
+every dyad and voice is mixed with an OFFSET COPY of itself whose offset follows the dancers, as in sharp/ombak/ombak_wall_combined.py
+(OM_SUBTLE=1). DRIVE (Jon: "the wall is for combined action"): together (default) = every event follows the ensemble (AC of 1-6
+pooled), so the whole wall beats as one; each dancer = every new event takes the next of sensors 1-6. Switching retargets the events
+already sounding. The central sensor (7) does not drive the wall (2026-10-03). Activity = AC RMS over
 0.5 s / that sensor's 95th percentile in the 10-02 run (clipped 1.5); offset rising fast (0.12 s), relaxing slowly (1.5 s):
   freq   FreqShift copy (true ombak: every partial beats at the same rate)  depth x (0.5 + 9.5 act^2) Hz
   pitch  PitchShift copy (naive: higher partials beat faster)               depth x (3 + 47 act^2) cents
@@ -41,7 +43,7 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 ~wlOutBus = ~wlOutBus ? 0;
 ~wlP = (dyads: 0, voices: 0, chords: 0, master: 0.7, trim: [0, 0, 0], step: 0.25, relTime: 4);
 ~wlLevelsDb = [0, 1, 3];
-~wlOmP = ~wlOmP ? (on: true, mode: 0, depth: 0.1, wetDb: 0);   // OMBAK: mode 0 = freq shift, 1 = pitch shift   // per layer, relative to the median dyad (bell.py VOICE_REL_DB / CHORD_REL_DB)
+~wlOmP = (on: true, mode: 0, depth: 0.1, wetDb: 0, drive: 0).putAll(~wlOmP ? ());   // drive 0 = together (ensemble), 1 = each dancer (1-6)   // OMBAK: mode 0 = freq shift, 1 = pitch shift   // per layer, relative to the median dyad (bell.py VOICE_REL_DB / CHORD_REL_DB)
 s = Server.default;
 s.options.numBuffers = s.options.numBuffers.max(4096); s.options.memSize = s.options.memSize.max(2.pow(18));
 s.waitForBoot {
@@ -162,7 +164,9 @@ s.waitForBoot {
 	~wlOmSet = { ~wlOmCtl.setn([~wlOmP.on.asInteger, ~wlOmP.mode, ~wlOmP.wetDb.dbamp]); ~wlOmAct !? { ~wlOmAct.set(\depth, ~wlOmP.depth) } };
 	if (~fhBus.isNil or: { ~fhBus.server != s }) { ~fhBus = Bus.control(s, 14) };   // WALL loads before FORCE; force_hub.scd adopts this bus
 	~wlOmAct = Synth.before(~wlGroup, \wlOmAct, [\fbus, ~fhBus.index, \out, ~wlOmBus, \p95, ~wlOmP95, \depth, ~wlOmP.depth]);
-	~wlOmSet.(); ~wlOmK = 0;   // dyads take sensors 1-4 in turn
+	~wlOmSet.(); ~wlOmK = 0;
+	~wlOmDrv = { if (~wlOmP.drive == 0) { 7 } { var d = ~wlOmK % 6; ~wlOmK = ~wlOmK + 1; d } };   // 7 = ensemble of 1-6; 0-5 = sensors 1-6
+	~wlOmRetarget = { ~wlEvents[0..1].do { |evs| evs.do { |e| e[\syn] !? { |sy| sy.set(\drv, ~wlOmDrv.()) } } } };
 	~wlOmArgs = { |drv| [\drv, drv, \omBus, ~wlOmBus.index, \omCtl, ~wlOmCtl.index] };
 	SynthDef(\wlLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add; s.sync;
 	~wlMasterSyn = Synth.after(~wlRoom, \wlMaster, [\in, ~wlMixBus, \out, ~wlOutBus, \master, ~wlP.master]);
@@ -193,8 +197,7 @@ s.waitForBoot {
 			var w = ~wlDyadBufs.size.collect { |k| var age = if (~wlDyadFired[k].isNil) { 24 } { (~wlCount - ~wlDyadFired[k]).clip(1, 24) }; age.squared };
 			var k = (0..(~wlDyadBufs.size - 1)).wchoose(w.normalizeSum), d = assets["dyads"][k], dur = d["dur"].asFloat;
 			var gainDb = rrand(dyadGain[0], dyadGain[1]) + d["gain_db"].asFloat, pos = 1.0.rand2, width = rrand(0.3, 0.9), apex = 0.5.gauss(0.125).clip(0.25, 0.75);
-			var drv = ~wlOmK % 4;
-			~wlOmK = ~wlOmK + 1;
+			var drv = ~wlOmDrv.();
 			~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
 				Synth(\wlDyadA, [\buf, ~wlDyadBufs[k], \dur, dur, \apex, apex, \gain, gainDb.dbamp, \pos, pos, \width, width, \amp, ~wlLayerAmp.(0), \out, ~wlAmbiBus] ++ ~wlOmArgs.(drv), ~wlGroup) } {
 				Synth(\wlDyad, [\buf, ~wlDyadBufs[k], \dur, dur, \apex, apex, \gain, gainDb.dbamp, \pos, pos, \width, width, \amp, ~wlLayerAmp.(0), \out, ~wlMixBus] ++ ~wlOmArgs.(drv), ~wlGroup) };
@@ -211,9 +214,9 @@ s.waitForBoot {
 				~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
 					// ambi: the singer's home is spread round the full circle (base_pan * pi), +- a little
 					Synth(\wlVoiceA, [\buf, ~wlVoiceBufs[i], \start, a * sr, \dur, dur, \gain, assets["voices"][v]["gain_db"].asFloat.dbamp,
-						\pos, (assets["voices"][v]["base_pan"].asFloat + 0.15.rand2).wrap(-1, 1), \amp, ~wlLayerAmp.(1), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(1)] ++ ~wlOmArgs.(4 + i.min(3)), ~wlGroup) } {
+						\pos, (assets["voices"][v]["base_pan"].asFloat + 0.15.rand2).wrap(-1, 1), \amp, ~wlLayerAmp.(1), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(1)] ++ ~wlOmArgs.(~wlOmDrv.()), ~wlGroup) } {
 					Synth(\wlVoice, [\buf, ~wlVoiceBufs[i], \start, a * sr, \dur, dur, \gain, assets["voices"][v]["gain_db"].asFloat.dbamp, \pos, pos,
-					\amp, ~wlLayerAmp.(1), \dry, ~wlDry, \send, ~wlSend] ++ ~wlOmArgs.(4 + i.min(3)), ~wlGroup) };
+					\amp, ~wlLayerAmp.(1), \dry, ~wlDry, \send, ~wlSend] ++ ~wlOmArgs.(~wlOmDrv.()), ~wlGroup) };
 				~wlLog.("voice " ++ v ++ "  " ++ a.round(0.1) ++ "-" ++ b.round(0.1) ++ " s");
 				(dur: dur, src: i);
 			};
@@ -294,6 +297,8 @@ s.waitForBoot {
 	~wlOmMode = PopUpMenu().items_(["freq shift (ombak)", "pitch shift (naive)"]).value_(~wlOmP.mode).fixedWidth_(150).action_({ |m| ~wlOmP.mode = m.value; ~wlOmSet.() });
 	~wlOmDepth = NumberBox().clipLo_(0.01).clipHi_(2).step_(0.01).scroll_step_(0.01).decimals_(2).value_(~wlOmP.depth).fixedWidth_(52).action_({ |nb| ~wlOmP.depth = nb.value; ~wlOmSet.() });
 	~wlOmWet = NumberBox().clipLo_(-40).clipHi_(6).step_(1).scroll_step_(1).decimals_(0).value_(~wlOmP.wetDb).fixedWidth_(44).action_({ |nb| ~wlOmP.wetDb = nb.value; ~wlOmSet.() });
+	~wlOmDrive = PopUpMenu().items_(["together (ensemble 1-6)", "each dancer (1-6)"]).value_(~wlOmP.drive).fixedWidth_(170)
+		.action_({ |m| ~wlOmP.drive = m.value; ~wlOmRetarget.() });
 	~wlOmPreset = { |d| ~wlOmP.depth = d; ~wlOmDepth.value = d; ~wlOmSet.() };
 	~wlOmText = StaticText().string_("").font_(Font.monospace(11)).fixedHeight_(16);
 	~wlWin.layout = VLayout(
@@ -303,7 +308,7 @@ s.waitForBoot {
 			++ [VLayout(StaticText().string_("master").align_(\center).font_(Font.default.boldVariant), ~wlMasterText, HLayout(nil, ~wlMasterSl, nil).margins_(0), StaticText().string_(" "), StaticText().string_(" "))])),
 		HLayout(StaticText().string_("fade-out when lowered (s)"), ~wlRelBox, nil), HLayout(~wlHushBtn, ~wlCutBtn),
 		View().fixedHeight_(1).background_(Color.grey(0.6)),
-		HLayout(~wlOmBox, ~wlOmMode, StaticText().string_("depth"), ~wlOmDepth, Button().states_([["subtle 0.1"]]).action_({ ~wlOmPreset.(0.1) }),
+		HLayout(~wlOmBox, ~wlOmDrive, ~wlOmMode, StaticText().string_("depth"), ~wlOmDepth, Button().states_([["subtle 0.1"]]).action_({ ~wlOmPreset.(0.1) }),
 			Button().states_([["strong 1"]]).action_({ ~wlOmPreset.(1) }), StaticText().string_("copy dB"), ~wlOmWet, nil),
 		~wlOmText, ~wlLast, ~wlMidiText
 	);
@@ -314,7 +319,7 @@ s.waitForBoot {
 			~wlMasterText.string = if (~wlP.master <= 0.0001) { "-inf" } { ~wlP.master.ampdb.round(0.5).asString ++ " dB" } };
 		~wlOmBus !? { ~wlOmBus.getn(16, { |v| ~wlOmNow = v }) };
 		~wlOmNow !? { |v| var hz = ~wlOmP.mode == 0, vals = if (hz) { v.keep(8) } { v.drop(8) };
-			~wlOmText.string = if (~wlOmP.on.not) { "ombak off" } { (if (hz) { "beats Hz " } { "cents " }) ++ ["1", "2", "3", "4", "5", "6", "ctr", "ens"].collect { |n, k| n ++ " " ++ vals[k].round(if (hz) { 0.01 } { 0.1 }) }.join("  ") } };
+			~wlOmText.string = if (~wlOmP.on.not) { "ombak off" } { (if (hz) { "beats Hz " } { "cents " }) ++ if (~wlOmP.drive == 0) { "together " ++ vals[7].round(if (hz) { 0.01 } { 0.1 }) } { ["1", "2", "3", "4", "5", "6"].collect { |n, k| n ++ " " ++ vals[k].round(if (hz) { 0.01 } { 0.1 }) }.join("  ") } } };
 		0.5.wait } }.play(AppClock);
 
 	// ---- nanoKONTROL2, shared with breath36 via ~mkOwner ----
