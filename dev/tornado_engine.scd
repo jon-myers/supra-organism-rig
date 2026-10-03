@@ -16,6 +16,9 @@ is where the piece is, and every layer reads it.
             fitted body; tuned C D E G A, C3-E5, what the harmonium peak sounds), driven by everything the tornado plays. They ring
             26 dB under the music the whole time (level 0 dB), never jump; the cut just exposes them, dying over ~4 s ("ring").
             FADE OUT fades them too. (First tries, same night: plain comb filters + a JPverb room -- "corny and cheap sounding".)
+PHANTOM PAIN (2026-10-03, Jon: "a phantom pain ... original track playback send on the bottom"): the unprocessed track
+            (song_deconstruct/in/phantom_pain.wav) on its own path, front L / R (AMBI) or outs 1-2; PLAY from a position, STOP, FADE
+            IN / OUT, level; HARD CUT stops it too (finger-mute shape) unless unticked.
 LAYERS (x = BUILD)
   lines     the For Ann line renders (5 materials joining at x 0 / .12 / .25 / .38 / .5), an entry every 1.5 s -> 0.12 s, the lines
             climbing up to 3x faster, each at its own golden-angle direction                                       [clock]
@@ -40,7 +43,8 @@ var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/project
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
 ~tnRingGain = 1.2;   // calibration (2026-10-03): with the per-string ceiling (slim 0.08) a hard-driven ring sits ~28 dB under the music, a light one ~21
 ~tnP = (ringOn: true, ringLvl: 0, ringT60: 4, finger: true, folOn: false, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
-~tnP[\folOn] = false;   // FOLLOW off (Jon, 2026-10-03: "I actually didn't like the people driving the volume of the elements"); tick it to try again
+~tnP[\folOn] = false;
+~tnP = (ppDb: 0, ppFade: 4, ppFrom: 0, ppCut: true).putAll(~tnP);   // PHANTOM PAIN row   // FOLLOW off (Jon, 2026-10-03: "I actually didn't like the people driving the volume of the elements"); tick it to try again
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
@@ -48,7 +52,7 @@ s.waitForBoot { fork {
 	var man, rd, n = 0, total, loadList;
 	// ---- tear down a previous evaluation ----
 	{ ~tnWin !? { if (~tnWin.isClosed.not) { ~tnWin.onClose = nil; ~tnWin.close } } }.defer;
-	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free };
+	~tnStop !? { ~tnStop.() }; ~tnPPSyn !? { ~tnPPSyn.free }; ~tnPPSyn = nil; ~tnPPBuf !? { ~tnPPBuf.free }; ~tnPPBuf = nil; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free };
 	~tnAllBufs !? { ~tnAllBufs.do(_.free) }; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free; MIDIdef(\tncc).free; MIDIdef(\tnnote).free;
 	~tnBus !? { ~tnBus.free }; ~tnBus = Bus.audio(s, 4); ~tnRingIn !? { ~tnRingIn.free }; ~tnRingIn = Bus.audio(s, 1); ~tnDummy4 !? { ~tnDummy4.free }; ~tnDummy4 = Bus.audio(s, 4);
 	~tnZero !? { ~tnZero.free }; ~tnZero = Bus.control(s, 14).setn(0 ! 14);
@@ -113,6 +117,13 @@ s.waitForBoot { fork {
 		var u = (tr / \p95.kr(0.6 ! 8)).clip(0, 1.2).sqrt, db = depth * ((u - 0.45) / 0.55).clip(-1, 1);
 		var lv = \drv.kr(7 ! 5).collect { |d| Select.kr(d, db ++ [0]) };
 		Out.kr(out, (lv * on).dbamp.lag(0.5)) }).load(s);
+	// PHANTOM PAIN, the original track: front L / R, its own level (VarLag for fades), gate = stop / cut, position 4x/s
+	SynthDef(\tnPP, { |buf = 0, start = 0, amp = 1, alag = 0.1, gate = 1, rel = 0.3, out = 0, abus = 0, ambi = 0|
+		var x = PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start * BufSampleRate.ir(buf), 0, doneAction: 2);
+		var g = EnvGen.kr(Env.asr(0.01, 1, rel), gate, doneAction: 2) * VarLag.kr(amp, alag, warp: \sin), y = x * g;
+		SendReply.kr(Impulse.kr(4), '/tnPPPos', [start + Sweep.kr(0, 1)]);
+		Out.ar(abus, (FoaPanB.ar(y[0], 0.25pi, 0) + FoaPanB.ar(y[1], -0.25pi, 0)) * ambi.lag(0.05));
+		Out.ar(out, y * (1 - ambi).lag(0.05)) }).load(s);
 	// JOLTS: a jump of a sensor's AC between frames, over that sensor's 99th percentile today (x sens); at most one per 0.12 s
 	SynthDef(\tnJolt, { |fbus = 0, sens = 1, act95 = 0.56|
 		var ac = In.kr(fbus + 7, 7), thr = \thr.kr(0.08 ! 7);
@@ -194,6 +205,15 @@ s.waitForBoot { fork {
 				CheckBox().string_("   strings").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
 				lbl.("   level"), box.(\ringLvl, -40, 20, 1, 0, 52, { ~tnSetRing.() }), lbl.("dB (0 = 26 dB under the music)   ring"), box.(\ringT60, 0.5, 30, 0.5, 1, 52, { ~tnSetRing.() }), lbl.("s"), nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
+			hd.("PHANTOM PAIN -- the original track (its own level; HARD CUT stops it too unless unticked)"),
+			HLayout(~tnPPPlay = Button().states_([["PLAY", Color.black, Color.green(0.75)], ["STOP", Color.white, Color.blue(0.5)]]).fixedSize_(Size(90, 34))
+					.action_({ |b| if (b.value == 1) { ~tnPPStart.(~tnP[\ppDb].dbamp, 0.1) } { ~tnPPStop.(0.3) } }),
+				Button().states_([["FADE IN", Color.black, Color.green(0.85)]]).fixedWidth_(80).action_({ ~tnPPStart.(0, 0); ~tnPPLevel.(~tnP[\ppDb].dbamp, ~tnP[\ppFade]) }),
+				Button().states_([["FADE OUT", Color.white, Color.red(0.55)]]).fixedWidth_(84).action_({ ~tnPPStop.(~tnP[\ppFade]) }),
+				lbl.("  level"), box.(\ppDb, -40, 12, 1, 0, 48, { |v| ~tnPPLevel.(v.dbamp, 0.1) }), lbl.("dB   fade"), box.(\ppFade, 0.1, 60, 0.5, 1, 48), lbl.("s   from"),
+				box.(\ppFrom, 0, 320, 5, 0, 52), lbl.("s"), CheckBox().string_("HARD CUT stops it").value_(~tnP[\ppCut]).action_({ |c| ~tnP[\ppCut] = c.value }),
+				~tnPPTxt = StaticText().string_("").fixedWidth_(150), nil),
+			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			~tnStatus,
 			nil);
 		// what is in at a given BUILD, and what joins next
@@ -215,11 +235,12 @@ s.waitForBoot { fork {
 				~tnNowTxt.string = "playing now: everything up to \"" ++ (~tnEntries.select { |e| e[0] <= (x + 0.0001) }.last[1]) ++ "\"" ++
 					(nxt !? { "     next: " ++ nxt[1] ++ " at " ++ (nxt[0] * 100).round.asInteger ++ " %" + (if (rem.notNil and: { x < 1 }) { "(in ~" ++ ((nxt[0] - x) / (1 - x).max(0.001) * rem).round.asInteger ++ " s)" } { "" }) } ? "");
 				~tnLBus !? { ~tnLBus.getn(5, { |v| ~tnFolNow = v }) };
+				~tnPPTxt !? { ~tnPPTxt.string = if (~tnPPSyn.notNil) { "playing " ++ (~tnPPPos ? 0).asTimeString.drop(3).keep(5) ++ " / " ++ (~tnPPDur ? 0).asTimeString.drop(3).keep(5) } { "" } };
 				~tnFolNow !? { |v| ~tnFolTxt.string = if (~tnP[\folOn].not) { "follow off" } { "now  " ++ ["lines", "perc", "harm", "birds", "snatch"].collect { |nm, i| nm ++ " " ++ (v[i].max(0.0001).ampdb.round(0.5)) ++ " dB" }.join("   ") } };
 				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger ++ " %   loudest string " ++ (~tnRingPk ? 0).round(0.001) ++ (if (~tnCutDone == true) { "  [cut: HARD CUT again = damp strings]" } { "" })
 					++ "   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
 			n = n + 1; 0.25.wait } }.play(AppClock);
-		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnFolSyn = nil; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
+		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnPPSyn !? { ~tnPPSyn.free }; ~tnPPSyn = nil; ~tnPPBuf !? { ~tnPPBuf.free }; ~tnPPBuf = nil; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnFolSyn = nil; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
 			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
 			MIDIdef(\tncc).free; MIDIdef(\tnnote).free; ~mkOwners !? { ~mkOwners.remove(\tornado); if (~mkOwner == \tornado) { ~mkOwner = ~mkOwners.first } } };
 	}.defer;
@@ -235,6 +256,9 @@ s.waitForBoot { fork {
 	~tnNotes = man["harm_notes"].collect { |p| [p[0].asInteger, rd.(p[1])] }; ~tnTop = ~tnNotes.collect(_[0]).maxItem;
 	~tnSwell = man["harm_swell"].collect { |rel| rd.(rel) }; ~tnCluster = man["harm_cluster"].collect { |rel| rd.(rel) };
 	~tnStab = man["harm_stab"].collect { |rel| rd.(rel) }; ~tnSnatch = man["snatch"].collect { |p| [p[0].asSymbol, rd.(p[1])] };
+	~tnPPPath = [~tnRoot +/+ ".." +/+ ".." +/+ ".." +/+ "song_deconstruct" +/+ "in" +/+ "phantom_pain.wav",
+		~tnRoot +/+ ".." +/+ ".." +/+ ".." +/+ "concatenator-corpus" +/+ "targets" +/+ "Bill Converse 2 - Phantom Pain.wav"].detect { |f| File.exists(f) };
+	~tnPPBuf = ~tnPPPath !? { |f| Buffer.read(s, f) }; ~tnPPDur = ~tnPPPath !? { |f| SoundFile.openRead(f) !? { |sf| var d = sf.duration; sf.close; d } } ? 0;
 	s.sync; ~tnLoaded = true; ("TORNADO: " ++ n ++ " buffers loaded").postln;
 	~uiLater.(\tnLoad, { ~tnInfo !? { ~tnInfo.string = n.asString ++ " sounds loaded -- ready" } });
 
@@ -359,8 +383,19 @@ s.waitForBoot { fork {
 	~tnStop = { ~tnRouts !? { ~tnRouts.do(_.stop) }; ~tnRouts = (); ~tnClock !? { ~tnClock.stop }; ~tnClock = nil; ~tnRun = false };
 	// HARD CUT: the finger mute; pressed AGAIN once cut, a hand on the sympathetic strings too (they die in ~0.25 s)
 	~tnHardCut = { if (~tnCutDone == true) { ~tnRingSyn !? { ~tnRingSyn.set(\t60, 0.25) }; "TORNADO: strings damped".postln } {
-		~tnCutDone = true; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) };  ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
+		~tnCutDone = true; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) }; if (~tnP[\ppCut]) { ~tnPPStop.(0.04) };  ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
 		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln } };
+	// PHANTOM PAIN transport
+	~tnPPStart = { |amp, lag| var a = (~tnP[\ambi] == true) and: { ~ambiBus.notNil };
+		~tnPPSyn !? { ~tnPPSyn.set(\rel, 0.05, \gate, 0) }; ~tnPPSyn = nil;
+		if (~tnPPBuf.isNil) { "TORNADO: phantom_pain.wav not found".warn } {
+			~tnPPSyn = Synth(\tnPP, [\buf, ~tnPPBuf, \start, ~tnP[\ppFrom], \amp, amp, \alag, lag, \ambi, a.asInteger,
+				\abus, if (a) { ~ambiBus.index } { ~tnDummy4.index }], if (~ambiGrp.notNil) { ~ambiGrp } { s }, if (~ambiGrp.notNil) { \addBefore } { \addToTail });
+			~tnPPSyn.onFree { |n| if (~tnPPSyn === n) { ~tnPPSyn = nil; ~uiLater.(\tnPPBtn, { ~tnPPPlay !? { ~tnPPPlay.value = 0 } }) } };
+			~uiLater.(\tnPPBtn, { ~tnPPPlay !? { ~tnPPPlay.value = 1 } }) } };
+	~tnPPLevel = { |amp, lag| ~tnPPSyn !? { ~tnPPSyn.set(\alag, lag, \amp, amp) } };
+	~tnPPStop = { |secs| ~tnPPSyn !? { ~tnPPSyn.set(\rel, secs.max(0.02), \gate, 0) } };
+	OSCdef(\tnPPPos, { |m| if (~tnPPSyn.notNil and: { m[1] == ~tnPPSyn.nodeID }) { ~tnPPPos = m[3] } }, '/tnPPPos', s.addr);
 	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnRingSyn.set(\mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
 	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)); if (to >= 1) { ~tnClimaxAt = Main.elapsedTime + secs } };
