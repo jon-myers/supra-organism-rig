@@ -14,6 +14,10 @@ Voices sit 1 dB over the dyads (bell.py), everything spread across the stereo fi
 import os, json, subprocess, tempfile, numpy as np, soundfile as sf, datetime as dt
 from scipy.signal import butter, sosfilt, resample_poly
 import ombak_demo as om
+# OM_SUBTLE=1 (Jon, 2026-10-03: "much subtler ... like 1/10 of what it just was"): offsets / 10 -> 0.3 .. 5 cents, 0.05 .. 1 Hz
+SUB = os.environ.get("OM_SUBTLE") == "1"
+C0, C1, H0, H1 = (0.3, 5, 0.05, 1.0) if SUB else (3, 50, 0.5, 10)
+WET = 1.0; TAG = "_subtle" if SUB else ""
 SR, FS, OUT = om.SR, om.FS, om.OUT
 WOS = os.path.join(om.SO, "wall_of_sound")
 
@@ -54,11 +58,11 @@ if __name__ == "__main__":
     drvname = ["sensor 1", "sensor 2", "sensor 3", "sensor 4", "sensor 5", "sensor 6", "central (7)", "ensemble"]
     for (name, get, drv), pan in zip(elements, pans):
         p95 = np.percentile(rms(run_d[drv]), 95); act = np.clip(rms(drivers[drv]) / p95, 0, 1.5)
-        cents = om.lagud(np.interp(ta, t50, np.clip(3 + 47 * act ** 2, 3, 50)), 0.12, 1.5)
-        hz = om.lagud(np.interp(ta, t50, np.clip(0.5 + 9.5 * act ** 2, 0.5, 10)), 0.12, 1.5)
+        cents = om.lagud(np.interp(ta, t50, np.clip(C0 + (C1 - C0) * act ** 2, C0, C1)), 0.12, 1.5)
+        hz = om.lagud(np.interp(ta, t50, np.clip(H0 + (H1 - H0) * act ** 2, H0, H1)), 0.12, 1.5)
         x = get(); ph = 2 * np.pi * np.cumsum(hz) / SR
         from scipy.signal import hilbert
-        versions = {"pitch": 0.5 * (x + pitch_copy(x, cents)), "freq": 0.5 * (x + np.real(hilbert(x) * np.exp(1j * ph))), "dry": x}
+        versions = {"pitch": (x + WET * pitch_copy(x, cents)) / (1 + WET), "freq": (x + WET * np.real(hilbert(x) * np.exp(1j * ph))) / (1 + WET), "dry": x}
         for kname, y in versions.items(): mixes[kname] = mixes[kname] + np.stack([y * np.sqrt((1 - pan) / 2), y * np.sqrt((1 + pan) / 2)], 1)
         h = int(0.1 * SR); m = len(ta) // h
         page["elements"].append(dict(name=name, driver=drvname[drv], cents=[round(float(v), 1) for v in cents[::h][:m]], hz=[round(float(v), 2) for v in hz[::h][:m]]))
@@ -67,5 +71,5 @@ if __name__ == "__main__":
     def env(Y): h = int(0.1 * SR); m = len(Y) // h; return [round(float(v), 3) for v in np.abs(Y[:m * h]).max(1).reshape(m, h).max(1)]
     page["env"] = {}
     for kname, Y in mixes.items():
-        sf.write(os.path.join(OUT, f"combined_{kname}.wav"), (Y * g).astype(np.float32), SR, subtype="PCM_24"); page["env"][kname] = env(Y * g)
-    json.dump(page, open(os.path.join(OUT, "combined_page.json"), "w")); print("wrote combined_{pitch,freq,dry}.wav")
+        sf.write(os.path.join(OUT, f"combined_{kname}{TAG}.wav"), (Y * g).astype(np.float32), SR, subtype="PCM_24"); page["env"][kname] = env(Y * g)
+    json.dump(page, open(os.path.join(OUT, f"combined_page{TAG}.json"), "w")); print("wrote combined_{pitch,freq,dry}.wav")
