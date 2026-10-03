@@ -12,7 +12,8 @@ is where the piece is, and every layer reads it.
             every voice freed, all layers stopped. START begins again from the current BUILD.
   RING      (2026-10-03, Jon: "the hard cut might need some reverb, or ... sitar sympathetic strings ringing over everything")
             13 sympathetic strings (comb loops tuned C D E G A, C3-E5: what the harmonium peak material sounds; the sitar
-            taraf bank of idtap-client synthesis/kernels.py) + a long JPverb room, both fed by everything the tornado plays.
+            taraf bank of idtap-client synthesis/kernels.py), fed by everything the tornado plays. (A JPverb room was here too;
+            removed the same night -- Jon: "that reverb is incredibly corny and cheap sounding".)
             While it runs they sit under it as a halo ("during" dB); at HARD CUT the dry sound goes and they rise to "after" dB
             and ring out over "ring" s. FADE OUT fades the ring too; START puts them back under the music.
 LAYERS (x = BUILD)
@@ -32,7 +33,7 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
-~tnP = (ringOn: true, strDur: -18, strAft: 0, verbDur: -30, verbAft: -8, ring: 12).putAll(~tnP);   // the RING after HARD CUT
+~tnP = (ringOn: true, strDur: -18, strAft: 0, ring: 12).putAll(~tnP);   // the RING after HARD CUT
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
@@ -69,16 +70,14 @@ s.waitForBoot { fork {
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
 	// RING: sympathetic strings (each a comb loop at 1/f, its input darkened like thin wire, levelled by (1 - feedback) so a long
-	// ring does not swamp) + a JPverb room. cut 0 = "during" levels, cut 1 = "after"; the master fader (not its gate) scales it all.
+	// ring does not swamp). cut 0 = "during" levels, cut 1 = "after"; the master fader (not its gate) scales it all.
 	SynthDef(\tnRing, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, cut = 0, on = 1, ring = 12,
-			strDur = 0.12, strAft = 1, verbDur = 0.03, verbAft = 0.4|
+			strDur = 0.12, strAft = 1|
 		var x = In.ar(in, 1), c = Lag.kr(cut, 0.05), freqs = [48, 50, 52, 55, 57, 60, 62, 64, 67, 69, 72, 74, 76].midicps;
 		var drive = LPF.ar(HPF.ar(x, 70), 2500), b = 0 ! 4, v, amp;
 		freqs.do { |f, j| var g = 10 ** (-3 / (f * ring)), y = CombC.ar(drive * (1 - g) * \sgain.kr(6), 0.05, f.reciprocal, ring);
 			b = b + FoaPanB.ar(LPF.ar(y, 4000), j * 137.50776.degrad, 0) };
 		amp = (strDur * (1 - c)) + (strAft * c); b = b * amp / freqs.size.sqrt;
-		v = JPverb.ar(x ! 2, ring, 0.35, 2.5, 0.8) * ((verbDur * (1 - c)) + (verbAft * c));
-		b = b + FoaPanB.ar(v[0], 0.5pi, 0) + FoaPanB.ar(v[1], -0.5pi, 0);
 		b = b * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
@@ -151,10 +150,9 @@ s.waitForBoot { fork {
 			HLayout(lbl.("lines"), box.(\lines, -40, 12, 1, 0), lbl.("  percussion"), box.(\perc, -40, 12, 1, 0), lbl.("  harmonium"), box.(\harm, -40, 12, 1, 0),
 				lbl.("  birds"), box.(\birds, -40, 12, 1, 0), lbl.("  snatches"), box.(\snatch, -40, 12, 1, 0),
 				lbl.("     dancers' jolt sensitivity"), box.(\sens, 0.1, 5, 0.1, 1, 52, { |v| ~tnJolt !? { ~tnJolt.set(\sens, v) } }), lbl.("x"), nil),
-			hd.("RING -- sympathetic strings (C D E G A) + room, ringing on after HARD CUT (dB)"),
+			hd.("RING -- sympathetic strings (C D E G A), ringing on after HARD CUT (dB)"),
 			HLayout(CheckBox().string_("ring after HARD CUT").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
 				lbl.("   strings during"), box.(\strDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\strAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
-				lbl.("   room during"), box.(\verbDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\verbAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
 				lbl.("   ring"), box.(\ring, 2, 60, 1, 0, 52, { ~tnSetRing.() }), lbl.("s"), nil),
 			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			~tnStatus,
@@ -204,8 +202,7 @@ s.waitForBoot { fork {
 	// BEFORE the AMBI tab's decoder group (at the tail): a writer after it is never heard (Group.isPlaying is false for an unwatched group, so no check)
 	~tnMasterSyn = if (~ambiGrp.notNil) { Synth.before(~ambiGrp, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) } { Synth.tail(s, \tnMaster, [\in, ~tnBus.index, \ringbus, ~tnRingIn.index]) };
 	~tnRingSyn = Synth.after(~tnMasterSyn, \tnRing, [\in, ~tnRingIn.index]);
-	~tnSetRing = { ~tnRingSyn !? { ~tnRingSyn.set(\on, ~tnP[\ringOn].asInteger, \ring, ~tnP[\ring], \strDur, ~tnP[\strDur].dbamp, \strAft, ~tnP[\strAft].dbamp,
-		\verbDur, ~tnP[\verbDur].dbamp, \verbAft, ~tnP[\verbAft].dbamp) } };
+	~tnSetRing = { ~tnRingSyn !? { ~tnRingSyn.set(\on, ~tnP[\ringOn].asInteger, \ring, ~tnP[\ring], \strDur, ~tnP[\strDur].dbamp, \strAft, ~tnP[\strAft].dbamp) } };
 	~tnSetRing.();
 	~tnSetAmbi = { |on| var a = on and: { ~ambiBus.notNil }; ~tnP[\ambi] = on;
 		[~tnMasterSyn, ~tnRingSyn].do { |n| n !? { n.set(\ambi, a.asInteger, \abus, if (a) { ~ambiBus.index } { ~tnDummy4.index }) } };
