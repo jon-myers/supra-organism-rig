@@ -26,7 +26,7 @@ LAYERS (x = BUILD)
   harmonium swells (higher versions after x .45), a ladder of growing chords F2 -> A6 from x .3, a high cluster above x .9 [clock]
   birds     Macaulay Library calls from x .1, ~1 per 20 s -> ~3 per s                                                 [clock]
   snatches  a few whole 10-s Rite / Phantom Pain reconstruct stretches, 10 dB under the lines                        [clock]
-FOLLOW (2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
+FOLLOW (OFF by default -- Jon didn't like it) FOLLOW (2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
   each layer's volume follows a TRAILING AVERAGE of the dancers' motion (AC RMS, one-pole over "window" s, / its 95th percentile in the
   10-02 run, on a square-root scale so typical motion = 0 dB): still dancers -> about -0.8 x depth dB, a sustained surge -> +depth dB.
   Each layer picks its driver (ensemble of 1-6, one dancer 1-7, or off). Acts LIVE on everything already sounding.
@@ -38,7 +38,8 @@ var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/project
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
 ~tnRingGain = 0.66;   // calibration: lvl 0 dB = 26 dB under the music (headless, BUILD 0.9: strings 22.4 dB under at gain 1; 2026-10-03)
-~tnP = (ringOn: true, ringLvl: 0, ringT60: 4, finger: true, folOn: true, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
+~tnP = (ringOn: true, ringLvl: 0, ringT60: 4, finger: true, folOn: false, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
+~tnP[\folOn] = false;   // FOLLOW off (Jon, 2026-10-03: "I actually didn't like the people driving the volume of the elements"); tick it to try again
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
