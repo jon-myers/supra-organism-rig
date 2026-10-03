@@ -26,8 +26,8 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 (
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
-~tnP = ~tnP ? (master: 0.0, fade: 8, autoMin: 4, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
-~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
+~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
+~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
 s.waitForBoot { fork {
@@ -68,53 +68,92 @@ s.waitForBoot { fork {
 		SendReply.kr(Impulse.kr(10), '/tnAct', [(Lag.kr(ac.keep(6).squared.sum / 6, 1.0).sqrt / act95)]) }).load(s);
 	s.sync;
 
-	// ---- GUI ----
+	// ---- GUI (2026-10-02 night, redesigned: Jon couldn't read the first one -- "surely you should be able to see how much time is
+	// left, and to set it even") ----
 	{
-		var nb = { |key, lo, hi, step, dec, w = 52| NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec).value_(~tnP[key]).fixedWidth_(w).action_({ |b| ~tnP[key] = b.value }) };
-		var big = Font.default.size_(15).boldVariant;
+		var big = Font.default.size_(15).boldVariant, huge = Font.default.size_(28).boldVariant, head = Font.default.size_(12).boldVariant;
+		var hd = { |t| StaticText().string_(t).font_(head).stringColor_(Color.grey(0.35)) };
+		var box = { |key, lo, hi, step, dec, w = 56, fn| var b = NumberBox().clipLo_(lo).clipHi_(hi).step_(step).scroll_step_(step).decimals_(dec)
+			.value_(~tnP[key]).fixedWidth_(w).action_({ |bx| ~tnP[key] = bx.value; fn.(bx.value) }); ~tnBoxes[key] = b; b };   // returns the BOX
+		var lbl = { |t, w| var st = StaticText().string_(t); w !? { st.fixedWidth_(w) }; st };
 		~tnBoxes = ();
-		~tnWin = if (~stHost.notNil) { ~stHost.(\tornado) } { Window("TORNADO -- the ending, live", Rect(80, 60, 1000, 600)).front };
+		~tnWin = if (~stHost.notNil) { ~stHost.(\tornado) } { Window("TORNADO -- the ending, live", Rect(80, 60, 1100, 640)).front };
 		~uiPending = ~uiPending ? IdentityDictionary.new; ~uiLater = ~uiLater ? { |key, fn| ~uiPending[key] = fn };
 		if (~uiRout.isNil or: { ~uiRout.isPlaying.not }) {
 			~uiRout = Routine { loop { var p = ~uiPending; ~uiPending = IdentityDictionary.new; p.do { |fn| try { fn.value } }; 0.25.wait } }.play(AppClock) };
+		// transport
 		~tnInfo = StaticText().string_(if (~tnLoaded) { "ready" } { "loading sounds ..." });
-		~tnRunBtn = Button().states_([["START", Color.black, Color.green(0.75)], ["STOP (let ring)", Color.white, Color.blue(0.5)]]).fixedSize_(Size(150, 46)).font_(big)
+		~tnRunBtn = Button().states_([["START", Color.black, Color.green(0.75)], ["STOP (let ring)", Color.white, Color.blue(0.5)]]).fixedSize_(Size(160, 46)).font_(big)
 			.action_({ |b| if (b.value == 1) { ~tnStart.() } { ~tnStop.() } });
 		~tnStartBtn = ~tnRunBtn;
 		~tnCutBtn = Button().states_([["HARD CUT", Color.white, Color.red(0.75)]]).fixedSize_(Size(170, 46)).font_(big).action_({ ~tnHardCut.(); ~tnRunBtn.value = 0 });
+		// the clock
+		~tnCountdown = StaticText().string_("AUTO is off").font_(huge).fixedWidth_(420);
+		~tnAutoBox = CheckBox().string_("AUTO").font_(big).value_(~tnAuto).action_({ |c| ~tnSetAuto.(c.value) });
+		~tnMinBox = NumberBox().clipLo_(0).clipHi_(60).step_(1).decimals_(0).value_((~tnP[\toClimax] / 60).floor).fixedWidth_(46);
+		~tnSecBox = NumberBox().clipLo_(0).clipHi_(59).step_(5).decimals_(0).value_(~tnP[\toClimax] % 60).fixedWidth_(46);
+		~tnSetBtn = Button().states_([["SET + AUTO", Color.black, Color.new(1, 0.85, 0.5)]]).fixedWidth_(110)
+			.action_({ ~tnP[\toClimax] = (~tnMinBox.value * 60) + ~tnSecBox.value; ~tnSetAuto.(true) });
+		~tnMinus = Button().states_([["-30 s"]]).fixedWidth_(56).action_({ ~tnNudge.(-30) });
+		~tnPlus = Button().states_([["+30 s"]]).fixedWidth_(56).action_({ ~tnNudge.(30) });
+		~tnHoldBtn = Button().states_([["HOLD", Color.black, Color.grey(0.85)], ["HOLDING (clock paused)", Color.white, Color.new(0.7, 0.45, 0)]]).fixedWidth_(190)
+			.action_({ |b| ~tnHold = b.value == 1; if (~tnHold) { ~tnGlide = nil } });
+		~tnClimaxBtn = Button().states_([["CLIMAX NOW", Color.black, Color.new(1, 0.6, 0.2)]]).fixedWidth_(120)
+			.action_({ ~tnHold = false; ~tnHoldBtn.value = 0; ~tnGlideTo.(1, ~tnP[\climaxS]) });
+		// BUILD
 		~tnBuild = Slider().orientation_(\horizontal).fixedHeight_(44).value_(~tnX).action_({ |sl| ~tnGlide = nil; ~tnX = sl.value });
-		~tnBuildTxt = StaticText().string_("BUILD " ++ (~tnX * 100).round ++ " %").fixedWidth_(110).font_(big);
-		~tnAutoBox = CheckBox().string_("AUTO: reach the climax in").action_({ |c| ~tnAuto = c.value });
-		~tnHoldBtn = Button().states_([["HOLD", Color.black, Color.grey(0.85)], ["HOLDING", Color.white, Color.new(0.7, 0.45, 0)]]).fixedWidth_(110).action_({ |b| ~tnHold = b.value == 1; if (~tnHold) { ~tnGlide = nil } });
-		~tnClimaxBtn = Button().states_([["CLIMAX in", Color.black, Color.new(1, 0.75, 0.3)]]).fixedWidth_(100).action_({ ~tnHold = false; ~tnHoldBtn.value = 0; ~tnGlideTo.(1, ~tnP[\climaxS]) });
+		~tnBuildTxt = StaticText().string_("BUILD " ++ (~tnX * 100).round ++ " %").fixedWidth_(130).font_(big);
+		~tnNowTxt = StaticText().string_("").font_(Font.default.size_(13));
+		// output
 		~tnMaster = Slider().orientation_(\horizontal).fixedHeight_(30).value_((~tnP[\master].dbamp / 2).sqrt.min(1)).action_({ |sl|
-			var a = 2 * sl.value.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a); ~uiLater.(\tnM, { ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) });
+			var a = 2 * sl.value.squared; ~tnP[\master] = a.max(0.00001).ampdb; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, a) }; ~uiLater.(\tnM, { ~tnMasterTxt.string = if (a < 0.0001) { "off" } { a.ampdb.round(0.5).asString ++ " dB" } }) });
 		~tnMasterTxt = StaticText().string_(~tnP[\master].round(0.5).asString ++ " dB").fixedWidth_(64);
-		~tnFadeOut = Button().states_([["FADE OUT", Color.white, Color.red(0.55)]]).fixedWidth_(90).action_({ ~tnFade.(0, ~tnP[\fade]) });
-		~tnFadeIn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(80).action_({ ~tnFade.(~tnMasterAmp.(), ~tnP[\fade]) });
-		~tnAmbiBox = CheckBox().string_("AMBI").value_(~tnP[\ambi]).action_({ |c| ~tnSetAmbi.(c.value) });
+		~tnFadeOut = Button().states_([["FADE OUT", Color.white, Color.red(0.55)]]).fixedWidth_(100).action_({ ~tnFade.(0, ~tnP[\fade]) });
+		~tnFadeIn = Button().states_([["FADE IN", Color.black, Color.green(0.8)]]).fixedWidth_(90).action_({ ~tnFade.(~tnMasterAmp.(), ~tnP[\fade]) });
+		~tnAmbiBox = CheckBox().string_("AMBI (else stereo on outs 1-2)").value_(~tnP[\ambi]).action_({ |c| ~tnSetAmbi.(c.value) });
 		~tnStatus = StaticText().string_("").font_(Font.monospace(12));
 		~tnWin.layout = VLayout(
 			HLayout(~tnRunBtn, ~tnCutBtn, ~tnInfo, nil),
+			View().fixedHeight_(1).background_(Color.grey(0.6)),
+			hd.("THE CLOCK -- when the climax comes"),
+			HLayout(~tnCountdown, ~tnAutoBox, lbl.("climax in"), ~tnMinBox, lbl.("min"), ~tnSecBox, lbl.("s"), ~tnSetBtn, ~tnMinus, ~tnPlus, nil),
+			HLayout(~tnHoldBtn, ~tnClimaxBtn, lbl.("over"), box.(\climaxS, 1, 300, 1, 0), lbl.("s"), nil),
+			View().fixedHeight_(1).background_(Color.grey(0.6)),
+			hd.("BUILD -- where the ending is (drag it any time; the clock re-paces from where you leave it)"),
 			HLayout(~tnBuildTxt, [~tnBuild, stretch: 1]),
-			HLayout(~tnAutoBox, (~tnBoxes[\autoMin] = nb.(\autoMin, 0.2, 60, 0.5, 1)), StaticText().string_("min"), ~tnHoldBtn, ~tnClimaxBtn, (~tnBoxes[\climaxS] = nb.(\climaxS, 1, 300, 1, 0)), StaticText().string_("s"),
-				Button().states_([["0 %"]]).fixedWidth_(46).action_({ ~tnGlide = nil; ~tnX = 0 }), Button().states_([["50 %"]]).fixedWidth_(50).action_({ ~tnGlide = nil; ~tnX = 0.5 }),
-				Button().states_([["80 %"]]).fixedWidth_(50).action_({ ~tnGlide = nil; ~tnX = 0.8 }), nil),
-			HLayout(StaticText().string_("MASTER"), [~tnMaster, stretch: 1], ~tnMasterTxt, StaticText().string_("fade s"), (~tnBoxes[\fade] = nb.(\fade, 0.1, 120, 0.5, 1)), ~tnFadeIn, ~tnFadeOut, ~tnAmbiBox),
-			HLayout(StaticText().string_("levels dB:"), StaticText().string_("lines"), (~tnBoxes[\lines] = nb.(\lines, -40, 12, 1, 0)), StaticText().string_("percussion"), (~tnBoxes[\perc] = nb.(\perc, -40, 12, 1, 0)),
-				StaticText().string_("harmonium"), (~tnBoxes[\harm] = nb.(\harm, -40, 12, 1, 0)), StaticText().string_("birds"), (~tnBoxes[\birds] = nb.(\birds, -40, 12, 1, 0)), StaticText().string_("snatches"), (~tnBoxes[\snatch] = nb.(\snatch, -40, 12, 1, 0)),
-				StaticText().string_("jolt sens"), (~tnBoxes[\sens] = NumberBox().clipLo_(0.1).clipHi_(5).step_(0.1).decimals_(1).value_(~tnP[\sens]).fixedWidth_(46).action_({ |b| ~tnP[\sens] = b.value; ~tnJolt !? { ~tnJolt.set(\sens, b.value) } })), nil),
+			HLayout(*([lbl.("jump to"), 0, 25, 50, 75, 90].collect { |p| if (p.isKindOf(View)) { p } { Button().states_([[p.asString ++ " %"]]).fixedWidth_(56).action_({ ~tnGlide = nil; ~tnX = p / 100 }) } } ++ [nil])),
+			~tnNowTxt,
+			View().fixedHeight_(1).background_(Color.grey(0.6)),
+			hd.("OUTPUT"),
+			HLayout(lbl.("MASTER"), [~tnMaster, stretch: 1], ~tnMasterTxt, lbl.("fade"), box.(\fade, 0.1, 120, 0.5, 1), lbl.("s"), ~tnFadeIn, ~tnFadeOut, ~tnAmbiBox),
+			hd.("MIX (dB, 0 = as in the render)"),
+			HLayout(lbl.("lines"), box.(\lines, -40, 12, 1, 0), lbl.("  percussion"), box.(\perc, -40, 12, 1, 0), lbl.("  harmonium"), box.(\harm, -40, 12, 1, 0),
+				lbl.("  birds"), box.(\birds, -40, 12, 1, 0), lbl.("  snatches"), box.(\snatch, -40, 12, 1, 0),
+				lbl.("     dancers' jolt sensitivity"), box.(\sens, 0.1, 5, 0.1, 1, 52, { |v| ~tnJolt !? { ~tnJolt.set(\sens, v) } }), lbl.("x"), nil),
+			View().fixedHeight_(1).background_(Color.grey(0.6)),
 			~tnStatus,
-			StaticText().string_("BUILD = where the ending is (0 = the start, 100 % = the climax). Stay at 100 % (or HOLD) as long as you like, then FADE OUT or HARD CUT. The dancers' jolts drive the percussion; needs the FORCE tab on the live OSC."),
 			nil);
-		~tnStatRout = Routine { var last = (entries: 0, hits: 0, events: 0); loop {
+		// what is in at a given BUILD, and what joins next
+		~tnEntries = [[0, "tornado lines (voice)"], [0.10, "birds, snatches"], [0.12, "+ breath lines, harmonium swells"], [0.15, "Articulation phrases, thuds"],
+			[0.25, "+ fry lines, kick heartbeat"], [0.30, "booms, harmonium ladder"], [0.38, "+ harmonium lines"], [0.45, "higher harmonium"],
+			[0.50, "+ mixed lines"], [0.60, "harmonium stabs"], [0.90, "high harmonium cluster"], [1.0, "CLIMAX (everything at full rate)"]];
+		~tnStatRout = Routine { var last = (entries: 0, hits: 0, events: 0), n = 0; loop {
 			var d = (entries: ~tnStats[\entries] - last[\entries], hits: ~tnStats[\hits] - last[\hits], events: ~tnStats[\events] - last[\events]);
-			last = ~tnStats.copy;
+			var x = ~tnX, nxt = ~tnEntries.detect { |e| e[0] > (x + 0.0001) }, rem = ~tnRemaining.();
+			if (n % 4 == 0) { last = ~tnStats.copy };
 			~uiLater.(\tnStat, {
-				~tnBuild.value = ~tnX; ~tnBuildTxt.string = "BUILD " ++ (~tnX * 100).round.asInteger ++ " %";
-				~tnStatus.string = "running " ++ ~tnRun ++ "   lines/s " ++ d[\entries] ++ "   jolts/s " ++ d[\hits] ++ "   events/s " ++ d[\events]
-					++ "   voices " ++ s.numSynths ++ "   motion " ++ (~tnAct * 100).round.asInteger ++ " %   out peak " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" });
-			1.wait } }.play(AppClock);
+				~tnBuild.value = x; ~tnBuildTxt.string = "BUILD " ++ (x * 100).round.asInteger ++ " %";
+				~tnCountdown.string = case
+					{ x >= 0.999 } { "AT CLIMAX  " ++ (Main.elapsedTime - (~tnAtClimax ? Main.elapsedTime)).asTimeString.drop(3).keep(5) }
+					{ ~tnHold } { "HOLDING  (" ++ (rem ? 0).asTimeString.drop(3).keep(5) ++ " left)" }
+					{ rem.notNil } { "CLIMAX IN  " ++ rem.asTimeString.drop(3).keep(5) }
+					{ "AUTO is off" };
+				~tnCountdown.stringColor_(if (x >= 0.999) { Color.red(0.7) } { if (rem.notNil and: { rem < 30 }) { Color.new(0.8, 0.4, 0) } { Color.black } });
+				~tnNowTxt.string = "playing now: everything up to \"" ++ (~tnEntries.select { |e| e[0] <= (x + 0.0001) }.last[1]) ++ "\"" ++
+					(nxt !? { "     next: " ++ nxt[1] ++ " at " ++ (nxt[0] * 100).round.asInteger ++ " %" + (if (rem.notNil and: { x < 1 }) { "(in ~" ++ ((nxt[0] - x) / (1 - x).max(0.001) * rem).round.asInteger ++ " s)" } { "" }) } ? "");
+				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger
+					++ " %   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
+			n = n + 1; 0.25.wait } }.play(AppClock);
 		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
 			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
 			MIDIdef(\tncc).free; MIDIdef(\tnnote).free; ~mkOwners !? { ~mkOwners.remove(\tornado); if (~mkOwner == \tornado) { ~mkOwner = ~mkOwners.first } } };
@@ -231,7 +270,10 @@ s.waitForBoot { fork {
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
 		~tnClock = Routine { var last = Main.elapsedTime; loop { var now = Main.elapsedTime, dt = now - last; last = now;
 			if (~tnGlide.notNil) { var g = ~tnGlide; ~tnX = (~tnX + (dt * g[\rate])).clip(0, 1); if (((g[\rate] > 0) and: { ~tnX >= g[\to] }) or: { (g[\rate] < 0) and: { ~tnX <= g[\to] } }) { ~tnX = g[\to]; ~tnGlide = nil } } {
-				if (~tnAuto and: { ~tnHold.not }) { ~tnX = (~tnX + (dt / (~tnP[\autoMin] * 60).max(1))).min(1) } };
+				if (~tnHold) { ~tnClimaxAt !? { ~tnClimaxAt = ~tnClimaxAt + dt } } {   // HOLD pauses the countdown
+					if (~tnAuto and: { ~tnClimaxAt.notNil }) { var rem = ~tnClimaxAt - now;
+						~tnX = if (rem <= dt) { 1 } { (~tnX + (dt * (1 - ~tnX) / rem)).min(1) } } } };
+			if (~tnX >= 0.999) { ~tnAtClimax = ~tnAtClimax ? now } { ~tnAtClimax = nil };
 			0.05.wait } }.play(SystemClock);
 		"TORNADO: running from BUILD " ++ (~tnX * 100).round ++ " %".postln } { "TORNADO: still loading".warn } };
 	~tnStop = { ~tnRouts !? { ~tnRouts.do(_.stop) }; ~tnRouts = (); ~tnClock !? { ~tnClock.stop }; ~tnClock = nil; ~tnRun = false };
@@ -239,11 +281,18 @@ s.waitForBoot { fork {
 		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln };
 	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
-	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)) };
+	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)); if (to >= 1) { ~tnClimaxAt = Main.elapsedTime + secs } };
+	// THE CLOCK: AUTO = reach the climax at a deadline (now + "climax in"); BUILD paces itself to land on it and re-paces from wherever
+	// the fader is left; HOLD pauses the countdown; -30 / +30 s move the deadline
+	~tnSetAuto = { |on| ~tnAuto = on; if (on) { ~tnClimaxAt = Main.elapsedTime + ~tnP[\toClimax] } { ~tnClimaxAt = nil };
+		{ ~tnAutoBox !? { ~tnAutoBox.value = on } }.defer };
+	~tnNudge = { |secs| if (~tnClimaxAt.notNil) { ~tnClimaxAt = (~tnClimaxAt + secs).max(Main.elapsedTime + 1) } { ~tnP[\toClimax] = (~tnP[\toClimax] + secs).max(10);
+		{ ~tnMinBox.value = (~tnP[\toClimax] / 60).floor; ~tnSecBox.value = ~tnP[\toClimax] % 60 }.defer } };
+	~tnRemaining = { if (~tnAuto and: { ~tnClimaxAt.notNil }) { (~tnClimaxAt - Main.elapsedTime).max(0) } { nil } };
 
 	// ---- nanoKONTROL2 (2026-10-02): shared like the other tabs (TRACK < > passes it on; selecting this tab takes it) ----
 	//   fader 1 BUILD   fader 2 MASTER   faders 3-7 levels (lines, percussion, harmonium, birds, snatches: -36 .. +6 dB)   fader 8 jolt sens
-	//   knob 1 AUTO minutes (0.5-15)   knob 2 CLIMAX glide s (2-90)   knob 3 fade s (0.5-30)
+	//   knob 1 time to the climax (30 s - 15 min; << starts AUTO with it)   knob 2 CLIMAX glide s (2-90)   knob 3 fade s (0.5-30)
 	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> climax   << auto on/off   SET fade out   MARKER < fade in
 	~mkOwners = (~mkOwners ? []).add(\tornado).asSet.asArray;
 	~tnLast = IdentityDictionary.new; ~tnCaught = IdentityDictionary.new; ~tnHeld = IdentityDictionary.new; ~tnWay = IdentityDictionary.new; ~tnPend = IdentityDictionary.new;
@@ -263,7 +312,7 @@ s.waitForBoot { fork {
 		{ num == 45 } { ~tnHardCut.(); { ~tnRunBtn.value = 0 }.defer }
 		{ num == 46 } { ~tnHold = ~tnHold.not; if (~tnHold) { ~tnGlide = nil }; { ~tnHoldBtn.value = ~tnHold.asInteger }.defer }
 		{ num == 44 } { ~tnHold = false; { ~tnHoldBtn.value = 0 }.defer; ~tnGlideTo.(1, ~tnP[\climaxS]) }
-		{ num == 43 } { ~tnAuto = ~tnAuto.not; { ~tnAutoBox.value = ~tnAuto }.defer }
+		{ num == 43 } { ~tnSetAuto.(~tnAuto.not) }
 		{ num == 60 } { ~tnFade.(0, ~tnP[\fade]) }
 		{ num == 61 } { ~tnFade.(~tnMasterAmp.(), ~tnP[\fade]) } };
 	MIDIClient.init(verbose: false); MIDIIn.connectAll(verbose: false);
@@ -277,7 +326,7 @@ s.waitForBoot { fork {
 			{ (cc >= 2) and: { cc <= 6 } } { var key = [\lines, \perc, \harm, \birds, \snatch][cc - 2];
 				if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, ~tnVOfDb.(~tnP[key])) }) { ~tnSetBox.(key, ~tnDbOf.(v).round(0.5)) } }
 			{ cc == 7 } { if (~tnSteady.(cc, val) and: { ~tnCatch.(cc, v, (~tnP[\sens] / 0.25).log / 12.log) }) { var sv = 0.25 * (12 ** v); ~tnSetBox.(\sens, sv.round(0.05)); ~tnJolt !? { ~tnJolt.set(\sens, sv) } } }
-			{ cc == 16 } { ~tnSetBox.(\autoMin, (0.5 * (30 ** v)).round(0.1)) }
+			{ cc == 16 } { var t = (30 * (30 ** v)).round(5); ~tnP[\toClimax] = t; ~uiLater.(\tnK16, { ~tnMinBox.value = (t / 60).floor; ~tnSecBox.value = t % 60 }) }
 			{ cc == 17 } { ~tnSetBox.(\climaxS, (2 * (45 ** v)).round(1)) }
 			{ cc == 18 } { ~tnSetBox.(\fade, (0.5 * (60 ** v)).round(0.1)) }
 			{ (val > 0) and: { [41, 42, 43, 44, 45, 46, 60, 61].includes(cc) } } { ~tnButton.(cc) } } }).permanent_(true);
