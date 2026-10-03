@@ -26,6 +26,10 @@ LAYERS (x = BUILD)
   harmonium swells (higher versions after x .45), a ladder of growing chords F2 -> A6 from x .3, a high cluster above x .9 [clock]
   birds     Macaulay Library calls from x .1, ~1 per 20 s -> ~3 per s                                                 [clock]
   snatches  a few whole 10-s Rite / Phantom Pain reconstruct stretches, 10 dB under the lines                        [clock]
+FOLLOW (2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
+  each layer's volume follows a TRAILING AVERAGE of the dancers' motion (AC RMS, one-pole over "window" s, / its 95th percentile in the
+  10-02 run, on a square-root scale so typical motion = 0 dB): still dancers -> about -0.8 x depth dB, a sustained surge -> +depth dB.
+  Each layer picks its driver (ensemble of 1-6, one dancer 1-7, or off). Acts LIVE on everything already sounding.
 Out: one B-format bus -> the AMBI tab (quad + binaural); no AMBI tab = a stereo fold-down on outs 1-2. Needs the FORCE tab on the
 live OSC for the dancers. Display: everything redraws 4 times a second at most.
 */
@@ -33,7 +37,7 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
-~tnP = (ringOn: true, strDur: -18, strAft: 0, ring: 12).putAll(~tnP);   // the RING after HARD CUT
+~tnP = (ringOn: true, strDur: -18, strAft: 0, ring: 12, folOn: true, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
 ~tnStats = (entries: 0, hits: 0, events: 0); ~tnLoaded = false;
 s = Server.default;
@@ -41,10 +45,11 @@ s.waitForBoot { fork {
 	var man, rd, n = 0, total, loadList;
 	// ---- tear down a previous evaluation ----
 	{ ~tnWin !? { if (~tnWin.isClosed.not) { ~tnWin.onClose = nil; ~tnWin.close } } }.defer;
-	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free };
+	~tnStop !? { ~tnStop.() }; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free };
 	~tnAllBufs !? { ~tnAllBufs.do(_.free) }; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free; MIDIdef(\tncc).free; MIDIdef(\tnnote).free;
 	~tnBus !? { ~tnBus.free }; ~tnBus = Bus.audio(s, 4); ~tnRingIn !? { ~tnRingIn.free }; ~tnRingIn = Bus.audio(s, 1); ~tnDummy4 !? { ~tnDummy4.free }; ~tnDummy4 = Bus.audio(s, 4);
 	~tnZero !? { ~tnZero.free }; ~tnZero = Bus.control(s, 14).setn(0 ! 14);
+	~tnLBus !? { ~tnLBus.free }; ~tnLBus = Bus.control(s, 5).setn(1 ! 5); ~tnLayerIx = (lines: 0, perc: 1, harm: 2, birds: 3, snatch: 4);   // FOLLOW: live level per layer
 
 	man = File.readAllString(~tnRoot +/+ "live" +/+ "live.json").parseJSON;
 	~tnGains = (); man["gains"].keysValuesDo { |k, v| ~tnGains[k.asSymbol] = v.asFloat };
@@ -52,15 +57,17 @@ s.waitForBoot { fork {
 	~tnSpeeds = man["speeds"].collect(_.asFloat);
 
 	// ---- synths ----
-	SynthDef(\tnMono, { |buf, amp = 1, az = 0, width = 0.8, dur = 0, att = 0.002, rel = 0.05, out = 0|
+	SynthDef(\tnMono, { |buf, amp = 1, az = 0, width = 0.8, dur = 0, att = 0.002, rel = 0.05, out = 0, lbus = 0|
+		var lv = In.kr(lbus);
 		var d = Select.kr(dur > 0, [BufDur.ir(buf), dur]);
 		var env = EnvGen.kr(Env([0, 1, 1, 0], [att, (d - att - rel).max(0), rel]), doneAction: 2);
-		var b = FoaPanB.ar(PlayBuf.ar(1, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp, az, 0);
+		var b = FoaPanB.ar(PlayBuf.ar(1, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp * lv, az, 0);
 		Out.ar(out, [b[0], b[1] * width, b[2] * width, b[3] * width]) }).load(s);
-	SynthDef(\tnStereo, { |buf, amp = 1, az = 0, spread = 0.52, width = 0.8, dur = 0, att = 0.002, rel = 0.05, out = 0|
+	SynthDef(\tnStereo, { |buf, amp = 1, az = 0, spread = 0.52, width = 0.8, dur = 0, att = 0.002, rel = 0.05, out = 0, lbus = 0|
+		var lv = In.kr(lbus);
 		var d = Select.kr(dur > 0, [BufDur.ir(buf), dur]);
 		var env = EnvGen.kr(Env([0, 1, 1, 0], [att, (d - att - rel).max(0), rel]), doneAction: 2);
-		var x = PlayBuf.ar(2, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp;
+		var x = PlayBuf.ar(2, buf, BufRateScale.ir(buf), doneAction: 2) * env * amp * lv;
 		var b = FoaPanB.ar(x[0], az + spread, 0) + FoaPanB.ar(x[1], az - spread, 0);
 		Out.ar(out, [b[0], b[1] * width, b[2] * width, b[3] * width]) }).load(s);
 	SynthDef(\tnMaster, { |in = 0, out = 0, abus = 0, ambi = 0, master = 1, mlag = 0.1, gate = 1, ringbus = 0|
@@ -81,6 +88,13 @@ s.waitForBoot { fork {
 		b = b * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
 		Out.ar(abus, b * ambi.lag(0.05));
 		Out.ar(out, [b[0] * 2.sqrt + b[2], b[0] * 2.sqrt - b[2]] * 0.5 * (1 - ambi).lag(0.05)) }).load(s);
+	// FOLLOW: trailing averages of the dancers -> a level per layer on ~tnLBus
+	SynthDef(\tnFollow, { |fbus = 0, out = 0, win = 4, depth = 6, on = 1|
+		var ac = In.kr(fbus + 7, 7).clip(-1, 1), sq = ac.squared ++ [ac.keep(6).squared.sum / 6];
+		var coef = exp(-1 / (win.max(0.2) * ControlRate.ir)), tr = sq.collect { |q| OnePole.kr(q, coef).max(0).sqrt };
+		var u = (tr / \p95.kr(0.6 ! 8)).clip(0, 1.2).sqrt, db = depth * ((u - 0.45) / 0.55).clip(-1, 1);
+		var lv = \drv.kr(7 ! 5).collect { |d| Select.kr(d, db ++ [0]) };
+		Out.kr(out, (lv * on).dbamp.lag(0.5)) }).load(s);
 	// JOLTS: a jump of a sensor's AC between frames, over that sensor's 99th percentile today (x sens); at most one per 0.12 s
 	SynthDef(\tnJolt, { |fbus = 0, sens = 1, act95 = 0.56|
 		var ac = In.kr(fbus + 7, 7), thr = \thr.kr(0.08 ! 7);
@@ -150,6 +164,13 @@ s.waitForBoot { fork {
 			HLayout(lbl.("lines"), box.(\lines, -40, 12, 1, 0), lbl.("  percussion"), box.(\perc, -40, 12, 1, 0), lbl.("  harmonium"), box.(\harm, -40, 12, 1, 0),
 				lbl.("  birds"), box.(\birds, -40, 12, 1, 0), lbl.("  snatches"), box.(\snatch, -40, 12, 1, 0),
 				lbl.("     dancers' jolt sensitivity"), box.(\sens, 0.1, 5, 0.1, 1, 52, { |v| ~tnJolt !? { ~tnJolt.set(\sens, v) } }), lbl.("x"), nil),
+			hd.("FOLLOW -- each layer's volume follows a trailing average of the dancers (live, on everything sounding)"),
+			HLayout(CheckBox().string_("follow").value_(~tnP[\folOn]).action_({ |c| ~tnP[\folOn] = c.value; ~tnSetFollow.() }),
+				lbl.("  window"), box.(\folWin, 0.5, 60, 0.5, 1, 52, { ~tnSetFollow.() }), lbl.("s   depth"), box.(\folDepth, 0, 18, 1, 0, 44, { ~tnSetFollow.() }), lbl.("dB  "),
+				*([\lines, \perc, \harm, \birds, \snatch].collect { |k| [lbl.(["lines", "perc", "harm", "birds", "snatch"][[\lines, \perc, \harm, \birds, \snatch].indexOf(k)]),
+					PopUpMenu().items_(["1", "2", "3", "4", "5", "6", "7 ctr", "ensemble", "off"]).value_(~tnP[\folDrv][k] ? 7).fixedWidth_(86)
+						.action_({ |m| ~tnP[\folDrv][k] = m.value; ~tnSetFollow.() })] }.flatten ++ [nil])),
+			~tnFolTxt = StaticText().string_("").font_(Font.monospace(11)),
 			hd.("RING -- sympathetic strings (C D E G A), ringing on after HARD CUT (dB)"),
 			HLayout(CheckBox().string_("ring after HARD CUT").value_(~tnP[\ringOn]).action_({ |c| ~tnP[\ringOn] = c.value; ~tnSetRing.() }),
 				lbl.("   strings during"), box.(\strDur, -60, 6, 1, 0, 52, { ~tnSetRing.() }), lbl.("after"), box.(\strAft, -60, 12, 1, 0, 52, { ~tnSetRing.() }),
@@ -175,10 +196,12 @@ s.waitForBoot { fork {
 				~tnCountdown.stringColor_(if (x >= 0.999) { Color.red(0.7) } { if (rem.notNil and: { rem < 30 }) { Color.new(0.8, 0.4, 0) } { Color.black } });
 				~tnNowTxt.string = "playing now: everything up to \"" ++ (~tnEntries.select { |e| e[0] <= (x + 0.0001) }.last[1]) ++ "\"" ++
 					(nxt !? { "     next: " ++ nxt[1] ++ " at " ++ (nxt[0] * 100).round.asInteger ++ " %" + (if (rem.notNil and: { x < 1 }) { "(in ~" ++ ((nxt[0] - x) / (1 - x).max(0.001) * rem).round.asInteger ++ " s)" } { "" }) } ? "");
+				~tnLBus !? { ~tnLBus.getn(5, { |v| ~tnFolNow = v }) };
+				~tnFolNow !? { |v| ~tnFolTxt.string = if (~tnP[\folOn].not) { "follow off" } { "now  " ++ ["lines", "perc", "harm", "birds", "snatch"].collect { |nm, i| nm ++ " " ++ (v[i].max(0.0001).ampdb.round(0.5)) ++ " dB" }.join("   ") } };
 				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger
 					++ " %   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
 			n = n + 1; 0.25.wait } }.play(AppClock);
-		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
+		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnFolSyn = nil; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
 			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
 			MIDIdef(\tncc).free; MIDIdef(\tnnote).free; ~mkOwners !? { ~mkOwners.remove(\tornado); if (~mkOwner == \tornado) { ~mkOwner = ~mkOwners.first } } };
 	}.defer;
@@ -210,15 +233,21 @@ s.waitForBoot { fork {
 	~tnSetAmbi.(~tnP[\ambi]);
 	~tnMasterAmp = { ~tnP[\master].dbamp }; ~tnMasterSyn.set(\master, ~tnMasterAmp.()); ~tnRingSyn.set(\master, ~tnMasterAmp.());
 	~tnJolt = Synth.head(s, \tnJolt, [\fbus, (~fhBus !? (_.index)) ? ~tnZero.index, \thr, ~tnThr, \sens, ~tnP[\sens], \act95, ~tnAct95]);
+	~tnFolSyn = Synth.after(~tnJolt, \tnFollow, [\fbus, (~fhBus !? (_.index)) ? ~tnZero.index, \out, ~tnLBus.index,
+		\p95, [0.659, 0.585, 0.727, 0.628, 0.62, 0.614, 0.595, 0.555]]);   // 4-s trailing RMS, 95th pct, 10-02 11:47-13:04 (1-7, ensemble)
+	~tnSetFollow = { var dv = ~tnP[\folDrv]; ~tnFolSyn !? { ~tnFolSyn.set(\on, ~tnP[\folOn].asInteger, \win, ~tnP[\folWin], \depth, ~tnP[\folDepth],
+		\drv, [\lines, \perc, \harm, \birds, \snatch].collect { |k| dv[k] ? 7 }) } };
+	~tnSetFollow.();
 
 	// ---- helpers ----
 	~tnCres = { |x| (-22 + (22 * (x ** 1.5))).dbamp };              // the layers' crescendo
 	~tnCresL = { |x| (-20 + (20 * x)).dbamp };                         // the lines' crescendo (forann_additive)
 	~tnLvl = { |k| ~tnP[k].dbamp };
 	~tnPick = { |cats| var pool = cats.collect { |c| ~tnHits[c] ? [] }.flatten; pool.choose };
-	~tnPlay = { |def, buf, amp, az, args|
+	~tnPlay = { |def, buf, amp, az, args, layer|
 		if (~tnRun and: { buf.notNil }) { ~tnStats[\events] = ~tnStats[\events] + 1;
-			s.makeBundle(~tnLat, { Synth(def, [\buf, buf, \amp, amp, \az, az, \out, ~tnBus.index] ++ (args ? []), ~tnGrp) }) } };
+			s.makeBundle(~tnLat, { Synth(def, [\buf, buf, \amp, amp, \az, az, \out, ~tnBus.index, \lbus, ~tnLBus.index + (~tnLayerIx[layer] ? 1)] ++ (args ? []), ~tnGrp) }) } };
+	~tnPlayL = { |layer, def, buf, amp, az, args| ~tnPlay.(def, buf, amp, az, args, layer) };
 	~tnExp = { |mean| mean * (1.0 - 1.0.rand).max(1e-9).log.neg };   // exponential wait (Poisson process)
 	~tnPois = { |lam| var lim = exp(lam.neg), k = 0, p = 1.0; while { p = p * 1.0.rand; p > lim } { k = k + 1 }; k };
 	~tnK = 0; ~tnGolden = 137.50776.degrad; ~tnCount = (voice: 0, breath: 0, fry: 0, harmonium: 0, mixed: 0);
@@ -231,24 +260,24 @@ s.waitForBoot { fork {
 			m = if ((st > 0) and: { (x - ~tnStages[st]) < (0.6 * stLen) } and: { 0.5.coin }) { newest } { pool.choose };
 			spw = 0.33 ** (x ** 1.6); si = ~tnSpeeds.collect { |v| (v - spw).abs }.minIndex;
 			lst = ~tnLines[m.asSymbol][si]; b = lst.wrapAt(~tnCount[m.asSymbol]); ~tnCount[m.asSymbol] = ~tnCount[m.asSymbol] + 1;
-			~tnPlay.(\tnMono, b, ~tnCresL.(x) * ~tnGains[\lines] * ~tnLvl.(\lines), (~tnK * ~tnGolden) % 2pi, [\width, 0.75]);
+			~tnPlayL.(\lines, \tnMono, b, ~tnCresL.(x) * ~tnGains[\lines] * ~tnLvl.(\lines), (~tnK * ~tnGolden) % 2pi, [\width, 0.75]);
 			~tnK = ~tnK + 1; ~tnStats[\entries] = ~tnStats[\entries] + 1;
 			(1.5 * ((0.12 / 1.5) ** (x ** 1.6))).wait } },
 		pulse: { loop { var x = ~tnX, y;
 			if (x < 0.25) { 0.25.wait } {
-				~tnPlay.(\tnMono, ~tnPick.([\kick, \art_boom]), 0.7 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand, [\width, 0.2]);
+				~tnPlayL.(\perc, \tnMono, ~tnPick.([\kick, \art_boom]), 0.7 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand, [\width, 0.2]);
 				y = (x - 0.25) / 0.75; (1.5 * ((0.07 / 1.5) ** (y ** 1.6)) * rrand(0.92, 1.08)).wait } } },
 		phrases: { loop { var x = ~tnX;
 			if (x < 0.15) { 0.5.wait } {
-				~tnPlay.(\tnStereo, ~tnPick.([\art_phrase]), 0.45 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand);
+				~tnPlayL.(\perc, \tnStereo, ~tnPick.([\art_phrase]), 0.45 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand);
 				(30 * ((1.1 / 30) ** (((x - 0.15) / 0.85).max(0) ** 1.3)) * rrand(0.7, 1.3)).wait } } },
 		swarm: { loop { var x = ~tnX;
-			if ((0.35 + ~tnAct).min(1).coin) { ~tnPlay.(\tnMono, ~tnPick.([\klatter_hi, \klatter_mid, \boops, \art_klatter]), 0.3 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand) };
+			if ((0.35 + ~tnAct).min(1).coin) { ~tnPlayL.(\perc, \tnMono, ~tnPick.([\klatter_hi, \klatter_mid, \boops, \art_klatter]), 0.3 * ~tnCres.(x) * ~tnGains[\perc] * ~tnLvl.(\perc), 2pi.rand) };
 			~tnExp.(1.0 / (0.2 * (200 ** (x ** 1.7)))).max(0.004).min(10).wait } },
 		swell: { loop { var x = ~tnX, hi, b;
 			if (x < 0.12) { 0.5.wait } {
 				hi = (((x - 0.45) / 0.55).max(0)).coin; b = if (hi) { ~tnSwell.copyRange(30, ~tnSwell.size - 1).choose } { ~tnSwell.keep(30).choose };
-				~tnPlay.(\tnStereo, b, 0.8 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.7]);
+				~tnPlayL.(\harm, \tnStereo, b, 0.8 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.7]);
 				(18 * ((2 / 18) ** (((x - 0.12) / 0.88).max(0) ** 1.2)) * rrand(0.7, 1.3)).wait } } },
 		ladder: { loop { var x = ~tnX, y, target, size, cand, len;
 			if (x < 0.3) { 0.5.wait } {
@@ -256,15 +285,15 @@ s.waitForBoot { fork {
 				cand = ~tnNotes.select { |p| (p[0] >= (target - 9)) and: { p[0] <= (target + 1) } };
 				if (cand.isEmpty) { cand = [~tnNotes.minItem { |p| (p[0] - target).abs }] };
 				len = rrand(0.35, 1.2) * (1 - (0.6 * y));
-				size.do { var p = cand.choose; ~tnPlay.(\tnStereo, p[1], 0.6 * ~tnCres.(x) / size.sqrt * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.4, \dur, len, \att, 0.01, \rel, 0.15]) };
+				size.do { var p = cand.choose; ~tnPlayL.(\harm, \tnStereo, p[1], 0.6 * ~tnCres.(x) / size.sqrt * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.4, \dur, len, \att, 0.01, \rel, 0.15]) };
 				(1.2 * ((0.15 / 1.2) ** (y ** 1.3)) * rrand(0.85, 1.15)).wait } } },
 		cluster: { loop { var x = ~tnX;
 			if (x < 0.9) { 0.5.wait } {
-				~tnPlay.(\tnStereo, ~tnCluster.choose, 0.9 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.8]);
+				~tnPlayL.(\harm, \tnStereo, ~tnCluster.choose, 0.9 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), 2pi.rand, [\spread, 0.8]);
 				(2.5 * (1 - ((x - 0.9) / 0.1))).max(0.6).wait } } },
 		birds: { loop { var x = ~tnX;
 			if (x < 0.1) { 0.5.wait } {
-				~tnPlay.(\tnMono, ~tnBirds.choose, 0.5 * ~tnCres.(x) * ~tnGains[\birds] * ~tnLvl.(\birds), 2pi.rand);
+				~tnPlayL.(\birds, \tnMono, ~tnBirds.choose, 0.5 * ~tnCres.(x) * ~tnGains[\birds] * ~tnLvl.(\birds), 2pi.rand);
 				~tnExp.(1.0 / (0.05 * (60 ** (((x - 0.1) / 0.9).max(0) ** 1.4)))).max(0.02).min(60).wait } } },
 		snatch: { var j = 0; loop { var x = ~tnX, kind, pool, b, linesRms, amp;
 			if (x < 0.1) { 0.5.wait } {
@@ -272,7 +301,7 @@ s.waitForBoot { fork {
 				pool = ~tnSnatch.select { |p| p[0] == kind }; b = (pool.choose ? ~tnSnatch.choose)[1];
 				// 10 dB under the lines at this moment: ~ (line level) x sqrt(lines sounding)
 				linesRms = ~tnCresL.(x) * ~tnGains[\lines] * ((43.7 * (0.33 ** (x ** 1.6))) / (1.5 * ((0.12 / 1.5) ** (x ** 1.6)))).sqrt;
-				~tnPlay.(\tnStereo, b, linesRms * -10.dbamp * ~tnLvl.(\snatch), 2pi.rand, [\spread, 0.6]);
+				~tnPlayL.(\snatch, \tnStereo, b, linesRms * -10.dbamp * ~tnLvl.(\snatch), 2pi.rand, [\spread, 0.6]);
 				j = j + 1; (10 + rrand(14, 24)).wait } } }
 	);
 	// the dancers: every jolt
@@ -281,11 +310,11 @@ s.waitForBoot { fork {
 			az = if (k < 6) { (k * 60 + rrand(-15, 15)).degrad } { 2pi.rand }; v = (0.45 + (0.25 * j)).min(1);
 			if ((0.15 + (0.85 * x)).coin) { (1 + ~tnPois.(7 * (x ** 2.2))).min(12).do { |r|
 				var b = ~tnPick.([\klatter_hi, \klatter_mid, \art_klatter, \boops]), dt = r * rrand(0.018, 0.055);
-				if (~tnRun and: { b.notNil }) { s.makeBundle(~tnLat + dt, { Synth(\tnMono, [\buf, b, \amp, 0.5 * v * ~tnCres.(x) * (0.85 ** r) * pc, \az, az + rrand(-0.2, 0.2), \out, ~tnBus.index], ~tnGrp) }) } } };
-			if ((x >= 0.15) and: { j > 1.3 } and: { 0.6.coin }) { ~tnPlay.(\tnMono, ~tnPick.([\thud, \art_thud, \fry]), 0.6 * v * ~tnCres.(x) * pc, az) };
-			if ((x >= 0.3) and: { (j > 1.4) or: { k == 6 } } and: { (0.35 + (0.65 * x)).coin }) { ~tnPlay.(\tnMono, ~tnPick.([\art_boom, \art_boom, \kick]), 0.8 * v * ~tnCres.(x) * pc, az, [\width, 0.3]) };
+				if (~tnRun and: { b.notNil }) { s.makeBundle(~tnLat + dt, { Synth(\tnMono, [\buf, b, \amp, 0.5 * v * ~tnCres.(x) * (0.85 ** r) * pc, \az, az + rrand(-0.2, 0.2), \out, ~tnBus.index, \lbus, ~tnLBus.index + 1], ~tnGrp) }) } } };
+			if ((x >= 0.15) and: { j > 1.3 } and: { 0.6.coin }) { ~tnPlayL.(\perc, \tnMono, ~tnPick.([\thud, \art_thud, \fry]), 0.6 * v * ~tnCres.(x) * pc, az) };
+			if ((x >= 0.3) and: { (j > 1.4) or: { k == 6 } } and: { (0.35 + (0.65 * x)).coin }) { ~tnPlayL.(\perc, \tnMono, ~tnPick.([\art_boom, \art_boom, \kick]), 0.8 * v * ~tnCres.(x) * pc, az, [\width, 0.3]) };
 			if ((x >= 0.6) and: { j > 2.2 } and: { 0.5.coin }) {
-				~tnPlay.(\tnStereo, if (x.coin) { ~tnStab.copyRange(20, ~tnStab.size - 1).choose } { ~tnStab.keep(20).choose }, 1.1 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), az) } } }, '/tnHit', s.addr);
+				~tnPlayL.(\harm, \tnStereo, if (x.coin) { ~tnStab.copyRange(20, ~tnStab.size - 1).choose } { ~tnStab.keep(20).choose }, 1.1 * ~tnCres.(x) * ~tnGains[\harm] * ~tnLvl.(\harm), az) } } }, '/tnHit', s.addr);
 	OSCdef(\tnAct, { |msg| ~tnAct = msg[3] }, '/tnAct', s.addr);
 	OSCdef(\tnLvl, { |msg| ~tnPeak = msg[3] }, '/tnLvl', s.addr);
 
@@ -293,7 +322,7 @@ s.waitForBoot { fork {
 	~tnRouts = ();
 	~tnStart = { if (~tnLoaded) {
 		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\cut, 0, \mlag, 0.1, \master, ~tnMasterAmp.());
-		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index);
+		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index); ~tnFolSyn !? { ~tnFolSyn.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index) };
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
 		~tnClock = Routine { var last = Main.elapsedTime; loop { var now = Main.elapsedTime, dt = now - last; last = now;
 			if (~tnGlide.notNil) { var g = ~tnGlide; ~tnX = (~tnX + (dt * g[\rate])).clip(0, 1); if (((g[\rate] > 0) and: { ~tnX >= g[\to] }) or: { (g[\rate] < 0) and: { ~tnX <= g[\to] } }) { ~tnX = g[\to]; ~tnGlide = nil } } {
@@ -320,7 +349,7 @@ s.waitForBoot { fork {
 	// ---- nanoKONTROL2 (2026-10-02): shared like the other tabs (TRACK < > passes it on; selecting this tab takes it) ----
 	//   fader 1 BUILD   fader 2 MASTER   faders 3-7 levels (lines, percussion, harmonium, birds, snatches: -36 .. +6 dB)   fader 8 jolt sens
 	//   knob 1 time to the peak (30 s - 15 min; << starts AUTO with it)   knob 2 PEAK glide s (2-90)   knob 3 fade s (0.5-30)
-	//   knob 4 RING length s (2-60)   knob 5 strings level after the cut (-36 .. +12 dB)
+	//   knob 4 RING length s (2-60)   knob 5 strings level after the cut (-36 .. +12 dB)   knob 6 FOLLOW window s (1-30)   knob 7 FOLLOW depth dB (0-18)
 	//   PLAY start   STOP stop (let ring)   REC HARD CUT   CYCLE hold   >> peak   << auto on/off   SET fade out   MARKER < fade in
 	~mkOwners = (~mkOwners ? []).add(\tornado).asSet.asArray;
 	~tnLast = IdentityDictionary.new; ~tnCaught = IdentityDictionary.new; ~tnHeld = IdentityDictionary.new; ~tnWay = IdentityDictionary.new; ~tnPend = IdentityDictionary.new;
@@ -359,6 +388,8 @@ s.waitForBoot { fork {
 			{ cc == 18 } { ~tnSetBox.(\fade, (0.5 * (60 ** v)).round(0.1)) }
 			{ cc == 19 } { ~tnSetBox.(\ring, (2 * (30 ** v)).round(1)); ~tnSetRing.() }
 			{ cc == 20 } { ~tnSetBox.(\strAft, (-36 + (48 * v)).round(1)); ~tnSetRing.() }
+			{ cc == 21 } { ~tnSetBox.(\folWin, (30 ** v).round(0.5).max(1)); ~tnSetFollow.() }
+			{ cc == 22 } { ~tnSetBox.(\folDepth, (18 * v).round(1)); ~tnSetFollow.() }
 			{ (val > 0) and: { [41, 42, 43, 44, 45, 46, 60, 61].includes(cc) } } { ~tnButton.(cc) } } }).permanent_(true);
 	MIDIdef.noteOn(\tnnote, { |vel, note| if (~mkOwner == \tornado) { ~tnButton.(note) } }).permanent_(true);
 	"TORNADO_ENGINE_READY".postln;
