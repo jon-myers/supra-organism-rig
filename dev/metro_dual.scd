@@ -317,7 +317,7 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 	~mdTrackLoad = { |path, then| var nch = SoundFile.openRead(path) !? { |f| var n = f.numChannels; f.close; n } ? 2;
 		~mdTrackBuf !? { ~mdTrackBuf.free }; ~mdTrackBuf = nil; ~mdTrackDur = 0;
 		~mdIfTrkBuf !? { ~mdIfTrkBuf.free }; ~mdIfTrkBuf = nil;
-		if (Server.default.serverRunning) { ~mdIfTrkBuf = Buffer.readChannel(Server.default, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }) };   // the speakers' copy
+		if (Server.default.serverRunning) { ~mdIfTrkBuf = Buffer.readChannel(Server.default, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }, action: { ~mdIfTrkBufPath = path }) };   // the speakers' copy
 		Buffer.readChannel(~msServer, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }, action: { |b|
 			~mdTrackBuf = b; ~mdTrackDur = b.numFrames / b.sampleRate; ~mdTrackPath = path; { then !? { then.value } }.defer(0.3) }) };
 	~mdTrackStart = { var go = {
@@ -331,11 +331,23 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 		if (~mdTrackList.isEmpty) { "in-ear: no audio files in in_ears/".warn } {
 			if (~mdTrackBuf.notNil and: { ~mdTrackPath == ~mdTrackList[~mdTrackIdx] }) { go.() } { ~mdTrackLoad.(~mdTrackList[~mdTrackIdx], go) } } };
 	// the speakers' copy of the track (main server)
-	~mdIfTrkStart = { |pos, lat| var sv = Server.default;
+	// 2026-10-03 (Jon: "speaker out isn't properly hooked up ... it doesn't play any audio out to the fireface"): METRONOME loads FIRST,
+	// often before the main server is up, so the track player was never sent there and a track loaded then had no speakers' copy.
+	// Now the copy sets itself up when needed: def sent, file read (start delayed by the read, position caught up), then played.
+	~mdIfTrkStart = { |pos, lat| var sv = Server.default, play;
 		~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
-		if (sv.serverRunning and: { ~mdIfTrkBuf.notNil }) {
-			sv.makeBundle(lat, { ~mdIfTrkSynth = Synth(\mdTrack, [\buf, ~mdIfTrkBuf, \amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger, \start, pos,
-				\loop, ~mdTrackLoop.asInteger, \out, ~mdIfPair * 2], sv.defaultGroup, \addToTail) }) } };
+		play = { |p, l| sv.makeBundle(l, { ~mdIfTrkSynth = Synth(\mdTrack, [\buf, ~mdIfTrkBuf, \amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger, \start, p,
+				\loop, ~mdTrackLoop.asInteger, \out, ~mdIfPair * 2], sv.defaultGroup, \addToTail) }) };
+		if (sv.serverRunning.not) { "metro: main server not running -- no speakers' copy of the track".warn } {
+			~mdTrackDef.send(sv);   // always (tiny; reaches the server before the timestamped start)
+			if (~mdIfTrkBuf.notNil and: { ~mdIfTrkBufPath == ~mdTrackPath }) { play.(pos, lat) } {
+				var t0 = Main.elapsedTime, path = ~mdTrackPath, nch = SoundFile.openRead(path) !? { |f| var n = f.numChannels; f.close; n } ? 2;
+				~mdIfTrkBuf !? { ~mdIfTrkBuf.free };
+				~mdIfTrkBuf = Buffer.readChannel(sv, path, channels: if (nch == 1) { [0, 0] } { [0, 1] }, action: { ~mdIfTrkBufPath = path;
+					if (~mdTrackPlaying) { var el = Main.elapsedTime - t0; play.((pos + (el - lat).max(0) + 0.2) % ~mdTrackDur.max(0.001), 0.2) } }) } } };
+	// the speakers' copy joins a track that is already playing (estimated position of the in-ears copy + the speaker delay)
+	~mdIfTrkJoin = { if (~mdTrackPlaying and: { ~mdIfTrkSynth.isNil }) {
+		~mdIfTrkStart.(((~mdTrackPos ? 0) + (Main.elapsedTime - (~mdTrackPosT ? Main.elapsedTime)) + 0.15) % ~mdTrackDur.max(0.001), 0.15 + ~mdIfDelay) } };
 	~mdTrackStop = { ~mdTrackSynth !? { ~mdTrackSynth.set(\gate, 0) }; ~mdTrackSynth = nil; ~mdTrackPlaying = false;
 		~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\gate, 0) }; ~mdIfTrkSynth = nil;
 		~uiLater.(\mdTrackBtn, { ~mdTrackBtn.value = 0 }) };
@@ -408,7 +420,8 @@ ServerQuit.add({ if (~msWantRunning and: { ~msExpectQuit.not } and: { ~msReconne
 			if (~mdMicIfOn) { ~uiLater.(\mdMicIfApply, { ~mdMicIfApply.() }) } });   // TotalMix updated at most 4x/s while dragging
 	// ---- OUTPUTS matrix: rows SPEAKERS / IN-EARS, columns CLICK / TRACK / MIC ----
 	~mdTrkHpBox = CheckBox().string_("track").value_(~mdTrkHpOn).action_({ |c| ~mdTrkHpOn = c.value; ~mdTrackSynth !? { ~mdTrackSynth.set(\amp, ~mdTrackAmp * ~mdTrkHpOn.asInteger) } });
-	~mdTrkIfBox = CheckBox().string_("track").value_(~mdTrkIfOn).action_({ |c| ~mdTrkIfOn = c.value; ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger) } });
+	~mdTrkIfBox = CheckBox().string_("track").value_(~mdTrkIfOn).action_({ |c| ~mdTrkIfOn = c.value; ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger) };
+		if (c.value) { ~mdIfTrkJoin.() } });
 	~mdTrkIfDbText = StaticText().string_(~mdDbStr.(~mdTrkIfAmp)).fixedWidth_(70).font_(Font.default.size_(15).boldVariant);
 	~mdTrkIfVol = Slider().orientation_(\horizontal).fixedHeight_(30).value_(~mdToPos.(~mdTrkIfAmp))
 		.action_({ |sl| ~mdTrkIfAmp = ~mdToAmp.(sl.value); ~mdIfTrkSynth !? { ~mdIfTrkSynth.set(\amp, ~mdTrkIfAmp * ~mdTrkIfOn.asInteger) };
