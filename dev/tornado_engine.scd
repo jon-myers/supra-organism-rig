@@ -26,7 +26,7 @@ LAYERS (x = BUILD)
   harmonium swells (higher versions after x .45), a ladder of growing chords F2 -> A6 from x .3, a high cluster above x .9 [clock]
   birds     Macaulay Library calls from x .1, ~1 per 20 s -> ~3 per s                                                 [clock]
   snatches  a few whole 10-s Rite / Phantom Pain reconstruct stretches, 10 dB under the lines                        [clock]
-FOLLOW (OFF by default -- Jon didn't like it) FOLLOW (2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
+FOLLOW (OFF by default since Jon didn't like it; 2026-10-03, Jon: "can it also affect the volumes of different elements, their activity? like a trailing avg maybe?"):
   each layer's volume follows a TRAILING AVERAGE of the dancers' motion (AC RMS, one-pole over "window" s, / its 95th percentile in the
   10-02 run, on a square-root scale so typical motion = 0 dB): still dancers -> about -0.8 x depth dB, a sustained surge -> +depth dB.
   Each layer picks its driver (ensemble of 1-6, one dancer 1-7, or off). Acts LIVE on everything already sounding.
