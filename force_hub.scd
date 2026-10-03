@@ -40,7 +40,7 @@ SOURCES, written to 14 control buses that any patch can read. Select all, evalua
 var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 ~fhRecDir = here +/+ "force_recordings";
 ~fhNames = ["1", "2", "3", "4", "5", "6", "central"];
-~fhP = ~fhP ? (source: \simulate, rate: 30, strength: 1, hold: 1, gap: 1, drift: 1, noise: 1, couple: 0.15,
+~fhP = ~fhP ? (source: \mapped, rate: 30, strength: 1, hold: 1, gap: 1, drift: 1, noise: 1, couple: 0.15,
 	central: \mean, acHere: false, sendOut: false, outHost: "127.0.0.1", outPort: 57121);
 ~fhOn = ~fhOn ? (true ! 6);
 s = Server.default;
