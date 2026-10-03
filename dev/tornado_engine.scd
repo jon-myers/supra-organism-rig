@@ -37,7 +37,7 @@ live OSC for the dancers. Display: everything redraws 4 times a second at most.
 var here = PathName(thisProcess.nowExecutingPath ? "~/Documents/2026/MIT/projects/supra-organism/rig/dev/tornado_engine.scd".standardizePath).pathOnly;
 ~tnRoot = here +/+ ".." +/+ "sharp" +/+ "accents";
 ~tnP = ~tnP ? (master: 0.0, fade: 8, toClimax: 240, climaxS: 20, sens: 1, lines: 0, perc: 0, harm: 0, birds: 0, snatch: 0, ambi: true);
-~tnRingGain = 0.66;   // calibration: lvl 0 dB = 26 dB under the music (headless, BUILD 0.9: strings 22.4 dB under at gain 1; 2026-10-03)
+~tnRingGain = 1.2;   // calibration (2026-10-03): with the per-string ceiling (slim 0.08) a hard-driven ring sits ~28 dB under the music, a light one ~21
 ~tnP = (ringOn: true, ringLvl: 0, ringT60: 4, finger: true, folOn: false, folWin: 4, folDepth: 6, folDrv: (lines: 7, perc: 7, harm: 7, birds: 7, snatch: 8)).putAll(~tnP);   // folDrv: 0-6 = dancer 1-7, 7 = ensemble, 8 = off   // the RING after HARD CUT
 ~tnP[\folOn] = false;   // FOLLOW off (Jon, 2026-10-03: "I actually didn't like the people driving the volume of the elements"); tick it to try again
 ~tnX = ~tnX ? 0; ~tnRun = false; ~tnAuto = false; ~tnClimaxAt = nil; ~tnAtClimax = nil; ~tnHold = false; ~tnGlide = nil; ~tnLat = 0.05; ~tnAct = 0;
@@ -94,10 +94,12 @@ s.waitForBoot { fork {
 		var bodyF = [61.551765783016805, 394.76819702770854, 356.6305040103169, 550.0312125345872, 1133.764848607439, 2634.183052925333], bodyQ = [6, 8, 6, 5, 4, 3], bodyMix = 0.558298962867979;
 		strs = midis.collect { |m, j|
 			var f = m.midicps, w = 2pi * f / srL, pd = atan2(sin(w) * (1 - a.squared), (2 * a) + ((1 + a.squared) * cos(w))) / w, d = (srL / f) - pd;
-			var g = (10 ** (-3 / (f * t60))).min(0.99999), dd = (d * (1 - (jaw * (fb[j] - thr).max(0)))).max(bs + 1);
+			var g = (10 ** (-3 / (f * t60))).min(0.99999), dd = (d * (1 - (jaw * (fb[j] - thr).clip(0, 0.2)))).max(bs + 1);   // jawari capped (2026-10-03)
 			x + (g * OnePole.ar(FOS.ar(DelayC.ar(fb[j], 0.03, (dd - bs) / srL), a, 1, a.neg), 0.004)) };
 		LocalOut.ar(strs);
-		b = strs.collect { |y, j| FoaPanB.ar(y, j * 137.50776.degrad, 0) }.sum / midis.size.sqrt;
+		// per-string ceiling on the OUTPUT only (the loops ring untouched): no one string can creep up and stay (Jon: "some element of it
+		// gets louder and doesn't go away"); \slim = the most any one string may sound
+		b = strs.collect { |y, j| var lim = \slim.kr(0.08); FoaPanB.ar(y * (lim / Amplitude.ar(y, 0.005, 0.3).max(lim)), j * 137.50776.degrad, 0) }.sum / midis.size.sqrt;
 		b = b.collect { |c| (bodyMix * bodyF.collect { |bf, k| BPF.ar(c, bf, bodyQ[k].reciprocal) * bodyQ[k] }.sum) + ((1 - bodyMix) * c) };
 		SendPeakRMS.kr(strs.abs.reduce(\max), 2, 3, '/tnRingPk');
 		b = LeakDC.ar(b) * gain * lvl * VarLag.kr(master, mlag, warp: \sin) * Lag.kr(on, 0.1);
@@ -213,8 +215,8 @@ s.waitForBoot { fork {
 					(nxt !? { "     next: " ++ nxt[1] ++ " at " ++ (nxt[0] * 100).round.asInteger ++ " %" + (if (rem.notNil and: { x < 1 }) { "(in ~" ++ ((nxt[0] - x) / (1 - x).max(0.001) * rem).round.asInteger ++ " s)" } { "" }) } ? "");
 				~tnLBus !? { ~tnLBus.getn(5, { |v| ~tnFolNow = v }) };
 				~tnFolNow !? { |v| ~tnFolTxt.string = if (~tnP[\folOn].not) { "follow off" } { "now  " ++ ["lines", "perc", "harm", "birds", "snatch"].collect { |nm, i| nm ++ " " ++ (v[i].max(0.0001).ampdb.round(0.5)) ++ " dB" }.join("   ") } };
-				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger
-					++ " %   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
+				if (n % 4 == 0) { ~tnStatus.string = (if (~tnRun) { "RUNNING" } { "stopped" }) ++ "   dancers: " ++ d[\hits] ++ " jolts/s, motion " ++ (~tnAct * 100).round.asInteger ++ " %   loudest string " ++ (~tnRingPk ? 0).round(0.001) ++ (if (~tnCutDone == true) { "  [cut: HARD CUT again = damp strings]" } { "" })
+					++ "   new lines " ++ d[\entries] ++ "/s   events " ++ d[\events] ++ "/s   sounding " ++ s.numSynths ++ " voices   out " ++ ((~tnPeak ? 0).max(0.000001).ampdb.round(1)) ++ " dB   CPU " ++ s.avgCPU.round(1) ++ " %" } });
 			n = n + 1; 0.25.wait } }.play(AppClock);
 		~tnWin.onClose = { ~tnStop.(); ~tnStatRout.stop; ~tnJolt !? { ~tnJolt.free }; ~tnFolSyn !? { ~tnFolSyn.free }; ~tnFolSyn = nil; ~tnMasterSyn !? { ~tnMasterSyn.free }; ~tnRingSyn !? { ~tnRingSyn.free }; ~tnGrp !? { ~tnGrp.free }; ~tnGrp = nil;
 			~tnAllBufs !? { ~tnAllBufs.do(_.free) }; ~tnAllBufs = nil; ~tnLoaded = false; OSCdef(\tnHit).free; OSCdef(\tnAct).free; OSCdef(\tnLvl).free;
@@ -337,7 +339,7 @@ s.waitForBoot { fork {
 
 	// ---- transport ----
 	~tnRouts = ();
-	~tnStart = { if (~tnLoaded) {
+	~tnStart = { if (~tnLoaded) { ~tnCutDone = false; ~tnSetRing.();
 		~tnStop.(); ~tnRun = true; ~tnMasterSyn.set(\gate, 1, \mlag, 0.1, \master, ~tnMasterAmp.()); ~tnRingSyn.set(\mlag, 0.1, \master, ~tnMasterAmp.());
 		~tnJolt.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index); ~tnFolSyn !? { ~tnFolSyn.set(\fbus, (~fhBus !? (_.index)) ? ~tnZero.index) };
 		~tnLayers.keysValuesDo { |k, f| ~tnRouts[k] = Routine(f).play(SystemClock) };
@@ -350,8 +352,10 @@ s.waitForBoot { fork {
 			0.05.wait } }.play(SystemClock);
 		"TORNADO: running from BUILD " ++ (~tnX * 100).round ++ " %".postln } { "TORNADO: still loading".warn } };
 	~tnStop = { ~tnRouts !? { ~tnRouts.do(_.stop) }; ~tnRouts = (); ~tnClock !? { ~tnClock.stop }; ~tnClock = nil; ~tnRun = false };
-	~tnHardCut = { ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) };  ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
-		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln };
+	// HARD CUT: the finger mute; pressed AGAIN once cut, a hand on the sympathetic strings too (they die in ~0.25 s)
+	~tnHardCut = { if (~tnCutDone == true) { ~tnRingSyn !? { ~tnRingSyn.set(\t60, 0.25) }; "TORNADO: strings damped".postln } {
+		~tnCutDone = true; ~tnMasterSyn !? { ~tnMasterSyn.set(\gate, 0) };  ~tnStop.(); ~tnFadeRout !? { ~tnFadeRout.stop };
+		SystemClock.sched(0.06, { ~tnGrp !? { ~tnGrp.freeAll }; nil }); "TORNADO: HARD CUT".postln } };
 	~tnFade = { |toAmp, secs| ~tnMasterSyn.set(\gate, 1, \mlag, secs, \master, toAmp); ~tnRingSyn.set(\mlag, secs, \master, toAmp); ~tnFadeRout !? { ~tnFadeRout.stop };
 		if (toAmp <= 0) { ~tnFadeRout = Routine { (secs + 0.2).wait; ~tnStop.(); ~tnGrp.freeAll; { ~tnRunBtn !? { ~tnRunBtn.value = 0 } }.defer }.play(SystemClock) } };
 	~tnGlideTo = { |to, secs| ~tnGlide = (to: to, rate: (to - ~tnX) / secs.max(0.05)); if (to >= 1) { ~tnClimaxAt = Main.elapsedTime + secs } };
