@@ -28,7 +28,8 @@ chords are spread very wide (three decorrelated copies per channel over each hal
 (default dyads none, voices none, chords -20 dB). Events already sounding finish where they started.
 OMBAK (2026-10-03, Jon: "thats pretty cool with the latest wall of sound ombak thing, lets get that wired up in supercollider"):
 every dyad and voice is mixed with an OFFSET COPY of itself whose offset follows the dancers, as in sharp/ombak/ombak_wall_combined.py
-(OM_SUBTLE=1). DRIVE (Jon: "the wall is for combined action"): together (default) = every event follows the ensemble (AC of 1-6
+(OM_SUBTLE=1), on the out-of-tune chords too. Each event keeps its own ratio (x0.7-1.4) to its driver's rate, so no two beat
+alike. DRIVE (Jon: "the wall is for combined action"): together (default) = every event follows the ensemble (AC of 1-6
 pooled), so the whole wall beats as one; each dancer = every new event takes the next of sensors 1-6. Switching retargets the events
 already sounding. The central sensor (7) does not drive the wall (2026-10-03). Activity = AC RMS over
 0.5 s / that sensor's 95th percentile in the 10-02 run (clipped 1.5); offset rising fast (0.12 s), relaxing slowly (1.5 s):
@@ -89,7 +90,7 @@ s.waitForBoot {
 		Out.kr(out, (LagUD.kr(0.5 + (9.5 * act), 0.12, 1.5) * depth) ++ (LagUD.kr(3 + (47 * act), 0.12, 1.5) * depth)) }).add;
 	// the offset copy, mixed power-preserving with the original; reads the driver's offset LIVE
 	~wlOm = { |x, drv|
-		var hz = In.kr(\omBus.kr(0) + drv), cents = In.kr(\omBus.kr(0) + 8 + drv), c = In.kr(\omCtl.kr(0), 3);
+		var mul = \omMul.kr(1), hz = In.kr(\omBus.kr(0) + drv) * mul, cents = In.kr(\omBus.kr(0) + 8 + drv) * mul, c = In.kr(\omCtl.kr(0), 3);
 		var w = (c[0] * c[2]).lag(0.3), y = x.asArray.collect { |ch|
 			var cp = Select.ar(c[1], [FreqShift.ar(ch, hz), PitchShift.ar(ch, 0.15, 2 ** (cents / 1200), 0, 0.004)]);
 			(ch + (w * cp)) / (1 + w.squared).sqrt };
@@ -110,8 +111,8 @@ s.waitForBoot {
 		sig = sig * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp;
 		Out.ar(dry, Pan2.ar(sig, pos)); Out.ar(send, Pan2.ar(sig * sendAmt, pos * 0.5));
 	}).add;
-	SynthDef(\wlChord, { |gate = 1, rel = 4, buf, start = 0, dur = 300, fadeIn = 45, fadeOut = 45, gain = 1, pos = 0, width = 0.5, amp = 1, out = 0|
-		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0);
+	SynthDef(\wlChord, { |gate = 1, rel = 4, buf, start = 0, dur = 300, fadeIn = 45, fadeOut = 45, gain = 1, pos = 0, width = 0.5, amp = 1, out = 0, drv = 7|
+		var sig = ~wlOm.(PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0), drv);
 		var env = EnvGen.kr(Env.linen(fadeIn, (dur - fadeIn - fadeOut).max(1), fadeOut, 1, \sine), doneAction: 2);
 		var mono = sig.sum * 0.7071, w = width.clip(0, 1);
 		Out.ar(out, (Balance2.ar(sig[0], sig[1], pos) * w + (Pan2.ar(mono, pos) * (1 - w))) * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp);
@@ -138,8 +139,8 @@ s.waitForBoot {
 	}).add;
 	// chords: VERY wide -- each channel as three slightly delayed copies spread over its half of the circle (L: +30/+90/+150 deg,
 	// R: -30/-90/-150), so the chord surrounds rather than sitting at two points
-	SynthDef(\wlChordA, { |gate = 1, rel = 4, buf, start = 0, dur = 300, fadeIn = 45, fadeOut = 45, gain = 1, amp = 1, out = 0, send = 0, sendAmt = 0|
-		var sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0);
+	SynthDef(\wlChordA, { |gate = 1, rel = 4, buf, start = 0, dur = 300, fadeIn = 45, fadeOut = 45, gain = 1, amp = 1, out = 0, send = 0, sendAmt = 0, drv = 7|
+		var sig = ~wlOm.(PlayBuf.ar(2, buf, BufRateScale.kr(buf), 1, start, 0), drv);
 		var env = EnvGen.kr(Env.linen(fadeIn, (dur - fadeIn - fadeOut).max(1), fadeOut, 1, \sine), doneAction: 2);
 		var dl = [0, 0.0113, 0.0237], b;
 		sig = sig * env * EnvGen.kr(Env.asr(0, 1, rel, -3), gate, doneAction: 2) * gain * amp;
@@ -166,8 +167,8 @@ s.waitForBoot {
 	~wlOmAct = Synth.before(~wlGroup, \wlOmAct, [\fbus, ~fhBus.index, \out, ~wlOmBus, \p95, ~wlOmP95, \depth, ~wlOmP.depth]);
 	~wlOmSet.(); ~wlOmK = 0;
 	~wlOmDrv = { if (~wlOmP.drive == 0) { 7 } { var d = ~wlOmK % 6; ~wlOmK = ~wlOmK + 1; d } };   // 7 = ensemble of 1-6; 0-5 = sensors 1-6
-	~wlOmRetarget = { ~wlEvents[0..1].do { |evs| evs.do { |e| e[\syn] !? { |sy| sy.set(\drv, ~wlOmDrv.()) } } } };
-	~wlOmArgs = { |drv| [\drv, drv, \omBus, ~wlOmBus.index, \omCtl, ~wlOmCtl.index] };
+	~wlOmRetarget = { ~wlEvents.do { |evs| evs.do { |e| e[\syn] !? { |sy| sy.set(\drv, ~wlOmDrv.()) } } } };
+	~wlOmArgs = { |drv| [\drv, drv, \omBus, ~wlOmBus.index, \omCtl, ~wlOmCtl.index, \omMul, exprand(0.7, 1.4)] };   // each event its own ratio: never two at the same rate
 	SynthDef(\wlLimit, { |out = 0| ReplaceOut.ar(out, Limiter.ar(In.ar(out, 2), 0.95, 0.01)) }).add; s.sync;
 	~wlMasterSyn = Synth.after(~wlRoom, \wlMaster, [\in, ~wlMixBus, \out, ~wlOutBus, \master, ~wlP.master]);
 	~wlLimiter !? { ~wlLimiter.free }; ~wlLimiter = Synth.after(~wlMasterSyn, \wlLimit, [\out, ~wlOutBus]);   // safety net
@@ -227,9 +228,9 @@ s.waitForBoot {
 				var i = cands.choose, k = chordIds[i], ch = assets["chords"][k], dur = ch["dur"].asFloat, sr = ~wlChordBufs[i].sampleRate;
 				~wlLastSyn = if (~wlAmbiOn.()) { ~wlEnsureAmbi.();
 					Synth(\wlChordA, [\buf, ~wlChordBufs[i], \start, ch["start_s"].asFloat * sr, \dur, dur, \fadeIn, ch["fade_in"].asFloat, \fadeOut, ch["fade_out"].asFloat,
-						\gain, ch["gain_db"].asFloat.dbamp, \amp, ~wlLayerAmp.(2), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(2)], ~wlGroup) } {
+						\gain, ch["gain_db"].asFloat.dbamp, \amp, ~wlLayerAmp.(2), \out, ~wlAmbiBus, \send, ~wlSendA, \sendAmt, ~wlRoomAmt.(2)] ++ ~wlOmArgs.(~wlOmDrv.()), ~wlGroup) } {
 					Synth(\wlChord, [\buf, ~wlChordBufs[i], \start, ch["start_s"].asFloat * sr, \dur, dur, \fadeIn, ch["fade_in"].asFloat, \fadeOut, ch["fade_out"].asFloat,
-					\gain, ch["gain_db"].asFloat.dbamp, \pos, ch["pan"].asFloat, \width, (ch["width"].asFloat / 90).clip(0, 1), \amp, ~wlLayerAmp.(2), \out, ~wlMixBus], ~wlGroup) };
+					\gain, ch["gain_db"].asFloat.dbamp, \pos, ch["pan"].asFloat, \width, (ch["width"].asFloat / 90).clip(0, 1), \amp, ~wlLayerAmp.(2), \out, ~wlMixBus] ++ ~wlOmArgs.(~wlOmDrv.()), ~wlGroup) };
 				~wlLog.("chord " ++ k ++ "  " ++ dur.round(1) ++ " s");
 				(dur: dur, src: i);
 			};
