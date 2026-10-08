@@ -52,7 +52,9 @@ def wav_paths(x, out):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dest")
-    ap.add_argument("--src", default=str(RIG.parent), help="Jon's supra-organism folder (default: this rig's parent)")
+    # default: the folder around the MAIN checkout of this repo (a worktree's own parent holds no audio)
+    common = subprocess.run(["git", "-C", str(RIG), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+    ap.add_argument("--src", default=str(Path(common).parent.parent), help="Jon's supra-organism folder (default: around the main checkout)")
     ap.add_argument("--ref", default="student")
     ap.add_argument("--sets", nargs="+", default=DEFAULT_SETS, help="sweep sets as <set>/<grain>")
     ap.add_argument("--code-only", action="store_true")
