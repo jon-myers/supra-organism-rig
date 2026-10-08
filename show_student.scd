@@ -16,7 +16,7 @@ MEMORY. SuperCollider holds every sound it plays in RAM (as 32-bit float, so a F
 At launch this file asks macOS how much memory the laptop has and how much is free right now, sets a BUDGET
 (60 % of total, and at most 90 % of what is free now), prices everything from the sound files' headers, and picks the
 richest step that fits:
-      36 breath voices + every sweep plane   ->   36 + 41 planes   ->   24 + 41   ->   24 + 21   ->   12 + 21   ->   12 + 11
+      36 breath voices + every sweep plane  ->  36 + 41 planes  ->  36 + 21  ->  30 + 21  ->  24 + 21  ->  24 + 11  ->  18 + 11  ->  12 + 11
 Breath voices are kept in the tiled order (anna, grisha, raymond, sora, ...), so every performer stays in. Fewer sweep
 planes = the same ladder, evenly spaced, in coarser steps (the scrub still crossfades neighbours). The plan is posted
 and shown at the top of the window. Quit other big apps (browsers!) before launching to get a richer step.
@@ -36,7 +36,7 @@ var ready = (wall: "~wlSliders", sweep: "~swSetMenu", force: "~fhMeters", breath
 var loadOrder = [\force, \wall, \sweep, \breath36, \ambi, \tornado];   // FORCE first (everyone reads ~fhBus); ambi after breath36 (reads ~b36Meta)
 var root = here +/+ "..";
 var gb = { |bytes| (bytes / 1e9).round(0.1) };
-var ramOf = { |path| var sf = SoundFile.openRead(path), b = 0; sf !? { b = sf.numFrames * sf.numChannels * 4; sf.close }; b };
+var ramOf = { |path| var sf = SoundFile.openRead(path), b = 0.0; sf !? { b = sf.numFrames.asFloat * sf.numChannels * 4; sf.close }; b };   // Float: 32-bit Integers overflow past 2 GB
 var missing = List.new, need, total, avail, budget, fixed, voiceCost, planeCost, maxPlanes, steps, plan, cost, wallJson, tnJson, voicesJson;
 
 // ---------------- 0. is everything installed / unpacked? ----------------
@@ -71,7 +71,7 @@ tnJson = File.readAllString(here +/+ "sharp" +/+ "accents" +/+ "live" +/+ "live.
 fixed = 1.0e9;
 fixed = fixed + (wallJson["dyads"].collect(_["file"]) ++ wallJson["voices"].values.collect(_["file"]) ++ wallJson["chords"].values.collect(_["file"]))
 	.collect { |f| ramOf.(if (f.beginsWith("/")) { f } { root +/+ "wall_of_sound" +/+ f }) }.sum;
-fixed = fixed + { var acc = 0, walk; walk = { |x| case
+fixed = fixed + { var acc = 0.0, walk; walk = { |x| case
 	{ x.isString } { if (x.endsWith(".wav")) { acc = acc + ramOf.(here +/+ "sharp" +/+ "accents" +/+ x) } }
 	{ x.isKindOf(Dictionary) } { x.values.do(walk) }
 	{ x.isArray } { x.do(walk) } }; walk.(tnJson); acc }.value;
@@ -83,7 +83,7 @@ maxPlanes = 0; planeCost = 0;
 PathName(root +/+ "song_deconstruct" +/+ "sweeps").folders.do { |setDir| setDir.folders.do { |g|
 	var fs = (g.fullPath +/+ "plane_*_lr.*").pathMatch;
 	if (g.folderName.beginsWith("full") and: { fs.notEmpty }) { maxPlanes = maxPlanes.max(fs.size); planeCost = planeCost.max(ramOf.(fs[0])) } } };
-steps = [[36, inf], [36, 41], [24, 41], [24, 21], [12, 21], [12, 11]];
+steps = [[36, inf], [36, 41], [36, 21], [30, 21], [24, 21], [24, 11], [18, 11], [12, 11]];   // breaths first (Jon: the most important tab)
 if (~studentVoices.notNil) { steps = steps.collect { |st| [~studentVoices, st[1]] } };
 if (~studentPlanes.notNil) { steps = steps.collect { |st| [st[0], ~studentPlanes] } };
 cost = { |st| fixed + (st[0] * voiceCost) + (st[1].min(maxPlanes) * planeCost) };
@@ -94,7 +94,8 @@ plan = steps.detect { |st| cost.(st) <= budget } ?? { steps.last };
 	++ "\nloading: " ++ plan[0] ++ " breath voices, sweep " ++ (if (~studentPlan[\planes].isNil) { "every plane (" ++ maxPlanes ++ ")" } { plan[1].asString ++ " of " ++ maxPlanes ++ " planes" })
 	++ "  ~ " ++ gb.(cost.(plan)) ++ " GB once a sweep set is chosen"
 	++ (if (cost.(plan) > budget) { "   -- OVER BUDGET even at the smallest step: quit other apps, expect glitches" } { "" });
-("\nSTUDENT RIG\n" ++ ~studentPlanText ++ "\n").postln;
+("\nSTUDENT RIG\n" ++ ~studentPlanText ++ "\nprices: fixed (wall, TORNADO, Phantom Pain, server + sclang) " ++ gb.(fixed) ++ " GB, one breath voice "
+	++ gb.(voiceCost) ++ " GB, one sweep plane " ++ gb.(planeCost) ++ " GB (" ++ maxPlanes ++ " in the biggest set)\n").postln;
 
 // ---------------- 2. settings the patches read when they load ----------------
 ~studentMode = true;
