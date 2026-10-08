@@ -66,9 +66,11 @@ s.waitForBoot {
 	s.sync;
 
 	// ---- buffers ----
-	~wlDyadBufs = assets["dyads"].collect { |d| Buffer.read(s, d["file"]) };
-	~wlVoiceBufs = voiceIds.collect { |v| Buffer.read(s, assets["voices"][v]["file"]) };
-	~wlChordBufs = chordIds.collect { |k| Buffer.read(s, assets["chords"][k]["file"]) };
+	// a relative "file" (the student pack's live_assets.json) is relative to wall_of_sound/
+	~wlFile = { |f| if (f.beginsWith("/")) { f } { ~wlRoot +/+ f } };
+	~wlDyadBufs = assets["dyads"].collect { |d| Buffer.read(s, ~wlFile.(d["file"])) };
+	~wlVoiceBufs = voiceIds.collect { |v| Buffer.read(s, ~wlFile.(assets["voices"][v]["file"])) };
+	~wlChordBufs = chordIds.collect { |k| Buffer.read(s, ~wlFile.(assets["chords"][k]["file"])) };
 	ir = Buffer.read(s, irPath); s.sync;
 	irFrames = ir.numFrames; irSpec = 2.collect { |ch| var mono = Buffer.alloc(s, irFrames, 1), spec = Buffer.alloc(s, PartConv.calcBufSize(fftSize, ir)); [mono, spec, ch] };
 	irSpec.do { |t| var mono = t[0], spec = t[1], ch = t[2]; ir.loadToFloatArray(action: { |arr| mono.loadCollection(arr.clump(2).collect(_[ch]), action: { spec.preparePartConv(mono, fftSize) }) }) };

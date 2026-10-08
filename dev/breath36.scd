@@ -50,7 +50,7 @@ before evaluating to load fewer. Select all, evaluate.
 ~b36Sharp = PathName(thisProcess.nowExecutingPath).pathOnly +/+ ".." +/+ "sharp";
 ~b36SpeedLevels = ~b36SpeedLevels ? [1.5, 2, 3, 4, 6, 8, 10];
 ~b36Midi = ~b36Midi ? true;
-~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = true;   // QUAD by default again (2026-09-30, Jon)   // quad outputs, in circle order
+~b36QuadOuts = ~b36QuadOuts ? [2, 3, 4, 5]; ~b36Quad = ~b36QuadDefault ? true;   // ~b36QuadDefault = false: stereo (student laptops)   // QUAD by default again (2026-09-30, Jon)   // quad outputs, in circle order
 ~b36N = 0; ~b36Fade = 3.0; ~b36Amp = 0.8; ~b36Comp = false; ~b36Spread = 0.9;
 // PULSE (2026-10-02, Jon): rhythmic UNISON breath attacks -- every playing voice starts its next breath together on a beat.
 // Beats from the METRONOME (its /msBeat, so the breaths follow its tempo and glides) or an own tempo; every N beats; each breath
@@ -133,6 +133,9 @@ s.waitForBoot {
 			idx !? { order = order.add(idx); added = true } };
 		if (added.not) { break.value } } };
 	meta["voices"] = order.collect { |j| meta["voices"][j] };
+	// ~b36MaxVoices (student launcher, sized to the laptop's RAM): keep the first k of the TILED order, so every performer
+	// stays represented (24 = 6 each). nil = all 36.
+	~b36MaxVoices !? { |k| meta["voices"] = meta["voices"].keep(k.asInteger.clip(1, meta["voices"].size)) };
 	~b36Meta = meta;
 	nv = meta["voices"].size;
 	ns = meta["slots"].size;
@@ -351,7 +354,7 @@ s.waitForBoot {
 			fv = File.readAllString(dir +/+ "features_voices.json").parseJSON["voices"];
 			~b36OcVoice = ~b36Meta["voices"].collect { |v| fv[v["voice"].asInteger.asString].collect { |sg| [sg[2].collect(_.asFloat), sg[3].asFloat] } } };
 		ot = File.readAllString(dir +/+ ("ocean_" ++ ~b36OcNames[~b36Ocean[\target]] ++ ".json")).parseJSON;
-		~b36OcHop = ot["hop"].asFloat; ~b36OcDur = ot["dur"].asFloat; ~b36OcPath = ot["path"];
+		~b36OcHop = ot["hop"].asFloat; ~b36OcDur = ot["dur"].asFloat; ~b36OcPath = ot["path"] !? { |p| if (p.beginsWith("/")) { p } { ~b36Sharp +/+ ".." +/+ p } };   // relative = from rig/ (student pack)
 		~b36OcShape = ot["shape"].collect { |f| f.collect(_.asFloat) }; ~b36OcRms = ot["rms"].collect(_.asFloat);
 		~b36OcMed = ~b36OcRms.copy.sort[~b36OcRms.size div: 2];
 		("breath36: OCEAN " ++ ~b36OcNames[~b36Ocean[\target]] ++ " loaded (" ++ ~b36OcShape.size ++ " frames)").postln };

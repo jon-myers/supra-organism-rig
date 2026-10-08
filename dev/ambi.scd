@@ -35,7 +35,7 @@ DISPLAY: redraws at most 4 times a second (vestibular migraine).
 // the quad decoder is horizontal): 0 = breath36's even circle, 1 = random with even coverage (the 36 even slots shuffled,
 // each jittered up to half a slot: random, never clumped), 2 = fully random. Re-roll = a new seed. New positions apply
 // from each voice's next breath.
-~ambiPos = { var n = 36, step = 2pi / n;
+~ambiPos = { var n = (~b36Meta !? { |m| m["voices"].size }) ? 36, step = 2pi / n;
 	thisThread.randSeed = ~ambiP[\posSeed];
 	~ambiAz = switch (~ambiP[\posMode],
 		0, { nil },
@@ -71,7 +71,7 @@ s.waitForBoot {
 	if (~ambiBus.server != s) { ~ambiBus = Bus.audio(s, 4) };
 	// the Rite of Spring tab (dev/rite_live.scd) loads BEFORE this one: switch it to the field now that ~ambiBus exists
 	if (~ambiDefaultOn ? true) { ~rtSetAmbi !? { ~rtSetAmbi.(true); { ~rtAmbiBox !? { ~rtAmbiBox.value = ~rtAmbi } }.defer } };
-	if (outsMax < 7) { ("ambi: the server has only " ++ (outsMax + 1) ++ " outputs -- binaural on 7/8 needs 8 (the dev launcher opens 8)").warn };
+	if (outsMax < ~ambiP[\binOuts].maxItem) { ("ambi: the server has only " ++ (outsMax + 1) ++ " outputs -- binaural on 7/8 needs 8 (the dev launcher opens 8)").warn };
 
 	// ---- decoders: rebuilt when the HRTF or quad type changes (kernels are baked into the SynthDef) ----
 	~ambiBuild = {
@@ -94,7 +94,7 @@ s.waitForBoot {
 		s.sync;
 		~ambiGrp !? { ~ambiGrp.free };
 		~ambiGrp = Group.tail(s);
-		~ambiQuadSyn = Synth(\ambiQuad, [\in, ~ambiBus.index, \map, ~ambiP[\quadMap], \quadAmp, ~ambiP[\quadDb].dbamp, \quadOn, ~ambiP[\quadOn].asInteger], ~ambiGrp);
+		~ambiQuadSyn = if (~ambiStereoOnly == true) { nil } { Synth(\ambiQuad, [\in, ~ambiBus.index, \map, ~ambiP[\quadMap], \quadAmp, ~ambiP[\quadDb].dbamp, \quadOn, ~ambiP[\quadOn].asInteger], ~ambiGrp) };
 		~ambiBinSyn = Synth(\ambiBin, [\in, ~ambiBus.index, \outs, ~ambiP[\binOuts], \binAmp, ~ambiP[\binDb].dbamp, \binOn, ~ambiP[\binOn].asInteger], ~ambiGrp);
 		old !? { { try { old.free } }.defer(1) };   // the old kernels' buffers, once nothing reads them
 		("AMBI decoders: quad " ++ ~ambiQuadTypes[~ambiP[\quadType]] ++ " -> outs " ++ (~ambiP[\quadMap] + 1) ++ ", binaural " ++ h[0] ++ " -> outs " ++ (~ambiP[\binOuts] + 1)).postln;
@@ -174,17 +174,18 @@ s.waitForBoot {
 			.action_({ |c| if (c.value and: { ~b36Meta.isNil }) { "ambi: load breath36 first".warn; c.value = false } { ~b36Ambi = c.value } });
 		~ambiWin.layout = VLayout(
 			StaticText().string_("AMBISONICS (first order, ATK) -- one B-format bus, two decoders at once").font_(Font.default.size_(15).boldVariant),
-			HLayout(onBox.("QUAD speakers", \quadOn, { ~ambiQuadSyn }, \quadOn), *(dbSl.(\quadDb, { ~ambiQuadSyn }, \quadAmp) ++ [
-				StaticText().string_("decoder"), PopUpMenu().items_(~ambiQuadTypes.collect(_.asString)).value_(~ambiP[\quadType]).fixedWidth_(110)
-					.action_({ |m| ~ambiP[\quadType] = m.value; fork { ~ambiBuild.() } })])),
-			HLayout(*(4.collect { |c| VLayout(StaticText().string_(~ambiSpkNames[c]).font_(bold), mapMenus[c]) } ++ [
-				Button().states_([["identify speakers"]]).action_({ ~ambiIdentify.() }), ~ambiIdText, nil])),
-			HLayout(onBox.("BINAURAL -> phones (outs " ++ (~ambiP[\binOuts] + 1).join("/") ++ ")", \binOn, { ~ambiBinSyn }, \binOn),
+			View().layout_(VLayout(
+				HLayout(onBox.("QUAD speakers", \quadOn, { ~ambiQuadSyn }, \quadOn), *(dbSl.(\quadDb, { ~ambiQuadSyn }, \quadAmp) ++ [
+					StaticText().string_("decoder"), PopUpMenu().items_(~ambiQuadTypes.collect(_.asString)).value_(~ambiP[\quadType]).fixedWidth_(110)
+						.action_({ |m| ~ambiP[\quadType] = m.value; fork { ~ambiBuild.() } })])),
+				HLayout(*(4.collect { |c| VLayout(StaticText().string_(~ambiSpkNames[c]).font_(bold), mapMenus[c]) } ++ [
+					Button().states_([["identify speakers"]]).action_({ ~ambiIdentify.() }), ~ambiIdText, nil]))).margins_(0)).visible_(~ambiStereoOnly != true),
+			HLayout(onBox.("BINAURAL -> " ++ (if (~ambiStereoOnly == true) { "headphones" } { "phones" }) ++ " (outs " ++ (~ambiP[\binOuts] + 1).join("/") ++ ")", \binOn, { ~ambiBinSyn }, \binOn),
 				*(dbSl.(\binDb, { ~ambiBinSyn }, \binAmp) ++ [StaticText().string_("HRTF"),
 				PopUpMenu().items_(~ambiHrtfs.collect(_[0])).value_(~ambiP[\hrtf]).fixedWidth_(230)
 					.action_({ |m| ~ambiP[\hrtf] = m.value; fork { ~ambiBuild.() } })])),
-			HLayout(StaticText().string_("TotalMix phones:"), Button().states_([["phones = binaural only"]]).action_({ ~ambiTmix.(\binaural) }),
-				Button().states_([["phones = speaker feeds"]]).action_({ ~ambiTmix.(\feeds) }), nil),
+			View().layout_(HLayout(StaticText().string_("TotalMix phones:"), Button().states_([["phones = binaural only"]]).action_({ ~ambiTmix.(\binaural) }),
+				Button().states_([["phones = speaker feeds"]]).action_({ ~ambiTmix.(\feeds) }), nil).margins_(0)).visible_(~ambiStereoOnly != true),
 			HLayout(onBox.("TEST: noise bursts circling", \testOn, nil, nil).action_({ |c| ~ambiSetTest.(c.value) }),
 				StaticText().string_("period s"), NumberBox().value_(~ambiP[\testPeriod]).clipLo_(1).clipHi_(60).decimals_(0).fixedWidth_(46)
 					.action_({ |b| ~ambiP[\testPeriod] = b.value; ~ambiTestSyn !? { ~ambiTestSyn.set(\period, b.value) } }),

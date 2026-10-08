@@ -46,6 +46,9 @@ var here = PathName(thisProcess.nowExecutingPath).pathOnly;
 // 20 steps per second into amp.lag(0.05) = smooth). The master fader keeps its position; nothing on screen animates.
 ~swFadeMul = 1; ~swFadeS = ~swFadeS ? 8;
 ~swMaxPlanes = 128;
+// ~swPlaneCap (student launcher, sized to the laptop's RAM): load at most this many planes of a set, evenly spaced over the
+// whole ladder (first and last kept). The scrub still crossfades neighbours, in coarser steps. nil = every plane.
+~swPlaneCap = ~swPlaneCap;
 ~swOrigPaths = [here +/+ ".." +/+ ".." +/+ "song_deconstruct" +/+ "in" +/+ "phantom_pain.wav",
 	here +/+ ".." +/+ ".." +/+ "concatenator-corpus" +/+ "targets" +/+ "Bill Converse 2 - Phantom Pain.wav"];
 ~ssP = ~ssP ? (on: false, dest: 0, amp: 0.8, offset: 0, lead: 0);   // dest 0 main, 1 headphones, 2 both; offset / lead in s
@@ -175,6 +178,7 @@ s.waitForBoot {
 		if (variants.includesEqual(~swP.variant).not) { ~swP.variant = variants.first };
 		~swVariants = variants;
 		files = files.select { |f| (~swP.variant == "") or: { f.contains(~swP.variant ++ ".") } }.keep(~swMaxPlanes);
+		~swPlaneCap !? { |k| if (files.size > k) { files = Array.interpolation(k.asInteger.max(2), 0, files.size - 1).round.asInteger.asSet.asArray.sort.collect { |i| files[i] } } };
 		~swFiles = files; ~swN = files.size; ~swSetName = name; ~swDir = dir; ~swPlaneInfo = IdentityDictionary.new;
 		// each plane's rate in Hz, from its plane_NN.json "desc" (the first number before " Hz": band/notch centre,
 		// lowpass/highpass cutoff). The scale differs per set, so the slider's labels are built from these.
@@ -331,7 +335,7 @@ s.waitForBoot {
 			~swDirty = false;
 			~swCentreText.string = (if (f < 0.005) { "plane " ++ (k0 + 1) } { "plane " ++ (k0 + 1) ++ " / " ++ (k0 + 2) ++ "   (" ++ (f * 100).round.asInteger ++ " %)" })
 				++ (~swPlaneHz !? { |a| "   " ++ a[c.round.asInteger.clip(0, a.size - 1)].round(if (a[c.round.asInteger.clip(0, a.size - 1)] < 1) { 0.01 } { 0.1 }) ++ " Hz" } ? "");
-			jp = ~swDir +/+ ("plane_" ++ (c.round.asInteger + 1).asString.padLeft(2, "0") ++ ".json");
+			jp = ~swDir +/+ (~swFiles[c.round.asInteger.clip(0, ~swN - 1)].basename.copyRange(0, 7) ++ ".json");
 			~swInfo.string = if (File.exists(jp)) { File.readAllString(jp).keep(160) } { "" } };
 		if (~swCentreShown != ~swCentreVal) { ~swCentreShown = ~swCentreVal; ~swCentreSl.refresh };
 		if (~swDur.notNil) { var p = ~swPos; ~swPosText.string = (p / 60).floor.asInteger.asString ++ ":" ++ (p % 60).floor.asInteger.asString.padLeft(2, "0");
