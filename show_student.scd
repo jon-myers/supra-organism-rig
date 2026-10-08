@@ -59,6 +59,8 @@ if (missing.notEmpty) {
 		++ "\nUnpack the pack so that rig/ sits next to song_deconstruct/, wall_of_sound/, concatenator-corpus/ (STUDENT.md, step 3). ***\n").error;
 	Error("student rig: not started (see above)").throw };
 
+~studentReady = nil;
+
 // ---------------- 1. memory: what this laptop has, what the show costs ----------------
 total = "sysctl -n hw.memsize".unixCmdGetStdOut.asFloat;
 avail = "vm_stat | awk '/page size of/{ps=$8} /Pages free/{f=$3} /Pages inactive/{i=$3} /Pages speculative/{s=$3} /Pages purgeable/{p=$3} END{printf \"%.0f\", (f+i+s+p)*ps}'".unixCmdGetStdOut.asFloat;
@@ -162,6 +164,7 @@ s.waitForBoot({
 		{ ~stShow.(~stCurrent ? \breath36);
 			~stPlanView.string = ~studentPlanText ++ "\n" ++ (if (failed.isEmpty) { "ready. Headphones on. Pick a sweep set in tab 2 to load it." }
 				{ "NOT READY: " ++ failed.collect { |n| ~stLabels[n] }.join(", ") ++ " -- see the post window" }) }.defer;
+		~studentReady = failed.isEmpty; ~studentFailed = failed;
 		"SHOW_STUDENT_READY".postln;
 	};
 }, 100, { "\n*** STUDENT RIG: the audio server did not start. Usually the Mac's input and output run at different sample rates: in Audio MIDI Setup set both to 48000 Hz (or choose the output with ~studentOutDevice = \"...\"; ServerOptions.outDevices lists them), then Server.killAll; and run again. ***\n".error });
