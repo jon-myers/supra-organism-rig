@@ -24,7 +24,7 @@ To force a step, set any of these BEFORE evaluating:
       ~studentVoices = 24;  ~studentPlanes = 41;  ~studentBudgetGB = 10;  ~studentOutDevice = "External Headphones";
 Then Server.killAll; and evaluate this file again.
 
-Needs: SuperCollider 3.13+, sc3-plugins, the ATK quark with its kernels and matrices (see STUDENT.md), and the
+Needs: SuperCollider 3.13+, sc3-plugins, the ATK quark with its kernels and matrices (see README.md), and the
 student sound pack unpacked so that this folder (rig/) sits next to song_deconstruct/, wall_of_sound/ and concatenator-corpus/.
 */
 (
@@ -41,7 +41,7 @@ var missing = List.new, need, total, avail, budget, fixed, voiceCost, planeCost,
 
 // ---------------- 0. is everything installed / unpacked? ----------------
 if (\FoaPanB.asClass.isNil or: { \FoaDecoderKernel.asClass.isNil }) {
-	"\n*** STUDENT RIG: the Ambisonic Toolkit is missing. Install sc3-plugins and the ATK quark (STUDENT.md, step 2), recompile, run again. ***\n".error;
+	"\n*** STUDENT RIG: the Ambisonic Toolkit is missing. Install sc3-plugins and the ATK quark (README.md, step 2), recompile, run again. ***\n".error;
 	Error("student rig: not started (see above)").throw };
 if (PathName(Atk.userKernelDir).folders.isEmpty) {
 	"\n*** STUDENT RIG: the ATK kernels are not downloaded. Run   Atk.downloadKernels; Atk.downloadMatrices;   wait for 'done', run again. ***\n".error;
@@ -56,7 +56,7 @@ need = [
 need.do { |n| if (File.exists(n[1]).not) { missing.add(n) } };
 if (missing.notEmpty) {
 	("\n*** STUDENT RIG: the sound pack is missing or in the wrong place. Not found:\n" ++ missing.collect { |n| "    " ++ n[0] ++ ":  " ++ n[1] }.join("\n")
-		++ "\nUnpack the pack so that rig/ sits next to song_deconstruct/, wall_of_sound/, concatenator-corpus/ (STUDENT.md, step 3). ***\n").error;
+		++ "\nUnpack the pack so that rig/ sits next to song_deconstruct/, wall_of_sound/, concatenator-corpus/ (README.md, step 1). ***\n").error;
 	Error("student rig: not started (see above)").throw };
 
 ~studentReady = nil;
